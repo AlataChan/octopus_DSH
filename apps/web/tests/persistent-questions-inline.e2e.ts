@@ -25,7 +25,7 @@ it('shows inline answer buttons without opening a header popover, survives reloa
   await page.goto(scaffold.authenticatedUrl)
   await connectFreshWorkspace(page, scaffold.workspaceCwd)
   await page.getByRole('button', { name: 'Standard mode', exact: true }).click()
-  await page.getByRole('menuitem', { name: /^Persistent questions/ }).click()
+  await page.getByRole('menuitem', { name: /^自动执行/ }).click()
   const input = page.locator('[data-composer-input][contenteditable="true"]').first()
   await input.fill('Ask me to choose an environment using the persistent question tool.')
   await input.press('Enter')
@@ -43,6 +43,7 @@ it('shows inline answer buttons without opening a header popover, survives reloa
   const visible = {
     question: await card.locator('p').first().textContent(),
     answerButtons: await card.getByRole('button').allTextContents(),
+    waitingHint: await card.getByText('The task is paused for your decision. Choose an option or enter an answer to continue in the original conversation.', { exact: true }).textContent(),
     headerDialogCount: await page.getByRole('dialog', { name: 'Question awaiting your answer' }).count(),
   }
   await compareOrRefreshGolden(fileURLToPath(new URL('./expected/persistent-questions-inline/choice-controls.expected.json', import.meta.url)), JSON.stringify(visible, null, 2), webSnapshotMode())

@@ -307,6 +307,7 @@ export function QuestionCard({
             <>
               <p className={css.question}>{view.question}</p>
               <p className={css.meta}>{t('expiresAt', { time: formatTime(t, view.expiresAtUtc) })}</p>
+              {panelStatus === 'active' && <p className={css.hint}>{t('waitingHint')}</p>}
               {/* Host-derived per read: only a live active-but-disarmed Goal
                   carries the flag, so no Goal and a truly paused phase stay
                   silent instead of promising a resume that cannot happen. */}

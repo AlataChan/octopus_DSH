@@ -48,11 +48,15 @@ The package's `dsh.bundle.patch` applies two layers at reconcile: the Host patch
 | `maxAnswerTextBytes` | `16384` | Maximum UTF-8 byte length of a free-text answer |
 | `reconcileMaxEvents` | `100000` | Maximum durable Session events scanned per session at boot reconciliation; exhaustion leaves the remainder honestly unknown |
 
+Select **自动执行** (Automatic execution, preset ID `persistent-questions`) beside the working directory before starting a new conversation. Its description explains the sequence: the agent advances the task, saves a question at a decision point, pauses, and handles the answer in a new turn of the original conversation. This preset does not grant continuous unattended execution or automatic restart recovery; Goal continuation remains separate. Existing sessions retain their original composition. The task must have no running teammates or background jobs when requesting a question.
+
 The active answer card stays visible above the ordinary composer, independent of collapsed tool history. The asking turn ending invalidates the shared question cache immediately; a 15-second background poll also reconciles external state changes. Click a choice to submit it immediately; for a written answer, use the card’s answer field and Send answer. The header question mark is an additional shortcut. After admission or cancellation the active card closes; the saved question remains readable in tool history.
 
 ### Optional Feishu answers
 
 Set `feishuEnabled: true` on the `session-decisions` row after configuring the desktop Feishu connection. The desktop owns the sole connection; this feature registers a card consumer on it. A question without an online connection remains answerable on the desktop. Free-text questions stay on the desktop; finite choices use plain-text buttons. Typing in Feishu continues into the existing IM conversation, while buttons answer the original question.
+
+Notifications cover decision points only. Completion and failure results remain in the original conversation; this adapter does not push a separate result notification or provide a generic IM channel.
 
 The question record owns publication status. Publication is claimed before sending; a lost send acknowledgment stays unknown and is never automatically resent. Each card binds its platform message, app, tenant, operator, chat, workspace, question revision, and durable authorization generation. Disabling or replacing credentials rotates the generation before credentials are replaced. Ordinary application close retains it for cold restore.
 

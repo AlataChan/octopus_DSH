@@ -7,5 +7,6 @@
     "Pause",
     "Cancel this question"
   ],
+  "waitingHint": "The task is paused for your decision. Choose an option or enter an answer to continue in the original conversation.",
   "headerDialogCount": 0
 }

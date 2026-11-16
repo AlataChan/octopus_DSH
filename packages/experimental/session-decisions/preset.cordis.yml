@@ -10,7 +10,8 @@
       name: '@deepseek-ai/dsh-agent-preset'
       config:
         id: persistent-questions
-        name: Persistent questions
+        name: 自动执行
+        description: 按目标推进任务，在需要你决策时暂停并保存问题；回答后回到原对话继续处理。可在桌面确认；飞书通知需另行启用并配置连接，仅支持选择题，且应用需保持在线。不保证离线通知或重启后自动续跑。
         order: 2
         plugins:
           - id: persona
