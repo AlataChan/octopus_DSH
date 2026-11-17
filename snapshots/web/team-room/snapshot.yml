@@ -1,0 +1,9 @@
+version: 1
+scenario: team-room
+profile: web
+composition: team-orchestration
+recording: live
+header:
+  class: team-orchestration
+session:
+  source: ../../session/team-orchestration/session.v4.jsonl

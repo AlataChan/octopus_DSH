@@ -2,7 +2,7 @@
 /** Browser activation through Cordis' guarded service context, rather than an unrestricted root. */
 import { describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
-import { SlotCore } from '@deepseek-ai/dsh-client-ui-slots'
+import { SlotCore, type PropsRenderSlots } from '@deepseek-ai/dsh-client-ui-slots'
 import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
 import { apply, inject } from '../src/client/index.ts'
 import { zh } from '../src/client/locales.ts'
@@ -24,8 +24,10 @@ describe('Assistant browser activation', () => {
       'conversation.input.overlay': { kind: 'list', scope: 'session' },
       'shell.overlay': { kind: 'list', scope: 'root' },
     } }, (() => null) as never)
-    const legacy = () => null
-    core.register({ name: 'conversation.hero.agentTeam' }, legacy)
+    const legacy = ({ renderSlot }: PropsRenderSlots<'conversation.hero.agentTeam.card'>) => renderSlot('conversation.hero.agentTeam.card', {})
+    core.register({ name: 'conversation.hero.agentTeam', children: {
+      'conversation.hero.agentTeam.card': { kind: 'list', scope: 'root' },
+    } }, legacy)
     const remoteDispose = vi.fn(async () => {})
     const mount = vi.fn(async () => { ctx.reflect.provide('remote.assistants', {}); return remoteDispose })
     ctx.reflect.provide('remote', { $mount: mount })
@@ -46,7 +48,8 @@ describe('Assistant browser activation', () => {
       await fiber.await()
       expect(mount).toHaveBeenCalledOnce()
       expect(core.entries('main')).toHaveLength(1)
-      expect(core.entriesOfSlot('conversation.hero.agentTeam')[0]?.component).not.toBe(legacy)
+      expect(core.entriesOfSlot('conversation.hero.agentTeam')[0]?.component).toBe(legacy)
+      expect(core.entries('conversation.hero.agentTeam.card')).toHaveLength(1)
       expect(core.entries('conversation.input.dock')).toHaveLength(2)
       expect(core.entries('conversation.input.overlay')).toHaveLength(1)
       const predictionEntry = core.entries('conversation.input.overlay')[0]!
@@ -64,6 +67,7 @@ describe('Assistant browser activation', () => {
       expect(core.entries('conversation.session.header.actions')).toHaveLength(1)
     } finally { await fiber.dispose(); await ctx.fiber.dispose() }
     expect(remoteDispose).toHaveBeenCalledOnce()
+    expect(core.entries('conversation.hero.agentTeam.card')).toHaveLength(0)
     expect(core.entriesOfSlot('conversation.hero.agentTeam')[0]?.component).toBe(legacy)
   })
 })

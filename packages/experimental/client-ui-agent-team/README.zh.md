@@ -37,9 +37,9 @@ Hero 行占据 `conversation.hero.agentTeam`，用 `agentTeams/listInstitutionSq
 
 打开 panel 会调用 `agentTeams/view`。Roster row 展示持久 name、运行时 status、model 与 diagnostics。选择健康 teammate 时，系统刷新既有直接 child catalog，并打开普通的 `{ parentSessionId, childSessionId, mode: 'continuable' }` address。History 与后续人类 prompt 继续使用稳定 addressed-subagent 会话路径；本包不会添加 Team 专用 address 字段。
 
-执行现场把主控放在队友上方，展示已记录的模型、运行状态和负责的进行中任务，并显示共享任务的完成数与总数。带方向的消息路径、任务依赖和简短的交接记录均读取现有 TeamView；记录仅包含成员名称与交互类型，不展示消息正文。面板可见时，运行中的成员显示脉冲，新消息光点持续 2.6 秒且不被普通刷新打断。已有历史和空闲成员保持静态。「减弱动态」及系统减少动态效果偏好会抑制运动，同时保留状态。
+协作现场把真实成员安置在插画会议桌周围。座位按成员的持久 ID 分配：在同一浏览器会话内，改名、名单排序、轮询及重新打开面板均保留座位；新成员复用空位，人数增加时新增会议桌，不缩小文字。房间、会议桌和装饰性坐姿人物是独立的本地 WebP 素材，内嵌在 Client 包中。姓名、职责、模型、运行状态与负责的进行中任务读取 TeamView，不写入图片。常驻团队在执行前也显示已保存席位，以「尚未开始」或「暂无实时状态」明确区分，不伪造 Session 身份。公共 Client 导出 TeamTopology 与 teamRoomCopy，使常驻团队的协作面板复用同一渲染器及词典。
 
-每位成员都有根据持久 Session ID 确定的离线内联 SVG 头像；改名、排序与冷重启不会改变头像。主控使用固定头像。不依赖图片服务、下载素材或额外浏览器运行时。空闲成员使用中性色标识；仅当所有未删除任务已完成、所有成员均空闲时，才显示完成横幅。总结入口位于任务操作区域之后。
+房间最多显示三条最近的交互路径与简短交接记录，不展示消息正文，也不推断送达回执。面板可见时，运行中的成员显示脉冲；只有新观察到的消息边显示光点，持续 2.6 秒且不被普通刷新打断。历史消息、任务依赖与空闲成员保持静态。本地「减弱动态」及系统减少动态效果偏好会抑制运动，同时保留状态。离线头像仍按持久 Session ID 生成。只有所有未删除任务完成且每名成员均空闲时才显示完成横幅；总结入口位于任务操作后方。
 
 打开或主动展开协作舱时，只定位一次执行现场。轮询与手动刷新保留用户的滚动位置，确保能访问下方的任务操作与总结入口。
 
@@ -94,7 +94,7 @@ Client export 挂载来自 [`@deepseek-ai/dsh-experimental-agent-team/remote`](.
 
 <a id="known-limitations-and-deferred-work"></a>
 
-- **Snapshot refresh**——panel 会在打开、显式 refresh 与 mutation 后刷新；它没有实时 event subscription 或 mailbox timeline。
+- **Snapshot refresh**——面板打开时每 1.5 秒轮询，任务修改后也会刷新；没有实时事件订阅或消息正文时间线。
 - **普通 child continuation**——导航后发送的人类消息使用稳定 addressed-subagent prompt 路径，而不是 Team peer mailbox。
 - **Dock 不能 spawn**——页头协作舱仍不能创建、重命名、删除或中断 teammate。常驻座位由 Hero 机构行 provision。write scope 仍只是提示性 metadata。
 

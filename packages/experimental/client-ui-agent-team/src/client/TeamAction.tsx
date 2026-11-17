@@ -18,7 +18,7 @@ import {
 import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import { NS, STARTER_TEMPLATES, type StarterTemplateId, type TeamKey } from './locales.ts'
-import { TeamTopology } from './TeamTopology.tsx'
+import { TeamTopology, teamRoomCopy } from './TeamTopology.tsx'
 import { TeamAvatar } from './TeamAvatar.tsx'
 import { ArchifySummary } from './ArchifySummary.tsx'
 import { discoverArchifyPathFromViews } from './discoverArchifyPath.ts'
@@ -639,24 +639,7 @@ export function TeamAction({
                     <TeamTopology
                       view={view}
                       revealKey={topologyReveal}
-                      copy={{
-                        title: t('topology'),
-                        settledTitle: t('teamCompletedTitle'),
-                        settledHint: t('teamIdleHint'),
-                        hint: t('topologyHint'),
-                        show: t('topologyShow'),
-                        hide: t('topologyHide'),
-                        empty: t('topologyEmpty'),
-                        edgeMessage: t('topologyEdgeMessage'),
-                        edgeTask: t('topologyEdgeTask'),
-                        motionReduce: t('motionReduce'),
-                        motionFull: t('motionFull'),
-                        memberStatus: key => t(key),
-                        leadRole: t('topologyLead'),
-                        workerRole: t('topologyWorker'),
-                        activityTitle: t('topologyActivity'),
-                        progress: (done, total) => t('topologyProgress', { done, total }),
-                      }}
+                      copy={teamRoomCopy(t)}
                     />
                   </div>
                   <div className={`${css.dockOps}${opsOpen ? '' : ` ${css.dockOpsCollapsed}`}`}>

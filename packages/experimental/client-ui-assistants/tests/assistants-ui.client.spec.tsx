@@ -459,7 +459,7 @@ describe('mount and slot registrations', () => {
     const cleanupFn = await mountAssistantsUi(ctx)
     expect(registeredSlots).toContain('sidebar.panellist')
     expect(registeredSlots).toContain('main')
-    expect(registeredSlots).toContain('conversation.hero.agentTeam')
+    expect(registeredSlots).toContain('conversation.hero.agentTeam.card')
     expect(registeredSlots).toContain('conversation.session.header.actions')
     expect(registeredSlots).toContain('conversation.input.dock')
 

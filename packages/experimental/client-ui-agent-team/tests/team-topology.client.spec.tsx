@@ -99,3 +99,53 @@ it('separates idle members from completed tasks and never marks a live team sett
   expect(queryByText(zh.teamCompletedTitle)).toBeNull()
   expect(container.querySelector('progress')).toBeNull()
 })
+
+it('seats the real roster and preserves each seat through reordering, renaming, joining and reopening', () => {
+  const scientist = { ...view.members[1]!, id: 'scientist-id' as SessionId, name: 'researcher', description: '核对实验资料' }
+  const roster = { ...view, members: [...view.members, scientist] }
+  const { container, rerender, unmount } = render(<TeamTopology view={roster} copy={copy} />)
+  const seat = (id: string) => container.querySelector(`[data-member-id="${id}"]`)
+  expect(container.querySelectorAll('[data-room-seat]')).toHaveLength(3)
+  const scientistSeat = seat(scientist.id)?.getAttribute('data-seat-index')
+  expect(scientistSeat).toBeTruthy()
+  const body = seat(scientist.id)?.querySelector('img')?.getAttribute('src')
+  const newcomer = { ...scientist, id: 'newcomer' as SessionId, name: 'budget-reviewer' }
+  rerender(<TeamTopology view={{ ...roster, members: [newcomer, { ...scientist, name: 'lab-reviewer' }, ...view.members.toReversed()] }} copy={copy} />)
+  expect(seat(scientist.id)?.getAttribute('data-seat-index')).toBe(scientistSeat)
+  expect(seat(scientist.id)?.textContent).toContain('lab-reviewer')
+  expect(seat(scientist.id)?.querySelector('img')?.getAttribute('src')).toBe(body)
+  expect(seat(scientist.id)?.textContent).toContain(scientist.description)
+  expect(container.querySelectorAll('[data-room-seat]')).toHaveLength(4)
+  unmount()
+  const reopened = render(<TeamTopology view={{ ...roster, members: [...roster.members].reverse() }} copy={copy} />)
+  expect(reopened.container.querySelector(`[data-member-id="${scientist.id}"]`)?.getAttribute('data-seat-index')).toBe(scientistSeat)
+})
+
+it('expands table space for a larger roster and frees removed seats without moving remaining members', () => {
+  const members = Array.from({ length: 12 }, (_, i) => ({ ...view.members[1]!, id: `worker-${i}` as SessionId, name: `worker-${i}` }))
+  const { container, rerender } = render(<TeamTopology view={{ ...view, members: [view.members[0]!, ...members] }} copy={copy} />)
+  expect(container.querySelectorAll('[data-room-seat]')).toHaveLength(13)
+  expect(container.querySelectorAll('[data-room-table]')).toHaveLength(3)
+  const original = container.querySelector('[data-member-id="worker-9"]')?.getAttribute('data-seat-index')
+  rerender(<TeamTopology view={{ ...view, members: [view.members[0]!, ...members.slice(1)] }} copy={copy} />)
+  expect(container.querySelector('[data-member-id="worker-0"]')).toBeNull()
+  expect(container.querySelector('[data-member-id="worker-9"]')?.getAttribute('data-seat-index')).toBe(original)
+  rerender(<TeamTopology view={{ members: [], tasks: [], interactions: [] }} copy={copy} />)
+  expect(container.querySelectorAll('[data-room-seat]')).toHaveLength(0)
+  expect(container.textContent).toContain(copy.empty)
+})
+
+it('renders only recent valid interaction routes and never repeats labels over the room', () => {
+  const history = Array.from({ length: 20 }, (_, i) => ({ ...message, id: `message-${i}` }))
+  const { container } = render(<TeamTopology view={{ ...view, interactions: [...history, { ...message, id: 'missing', to: 'absent-member' }] }} copy={copy} />)
+  expect(container.querySelectorAll('[data-edge-kind="message"]')).toHaveLength(3)
+  expect(container.querySelector('svg text')).toBeNull()
+  expect(container.querySelector('animateMotion')).toBeNull()
+})
+
+it('ignores malformed stored seating rather than duplicating a real member', () => {
+  sessionStorage.setItem('dsh.client.agent-team.seats:lead', JSON.stringify(['lead', 'writer', 'writer']))
+  const { container } = render(<TeamTopology view={view} copy={copy} />)
+  expect(container.querySelectorAll('[data-room-seat]')).toHaveLength(2)
+  expect(container.querySelectorAll('[data-member-id="writer"]')).toHaveLength(1)
+})

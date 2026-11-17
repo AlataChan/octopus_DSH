@@ -1,0 +1,52 @@
+- region "Standing squads":
+  - heading "Standing squads" [level=2]
+  - paragraph: The roster exists before chat. Opening a squad assigns work to that living team — it does not spawn a new one.
+  - paragraph: Choose a workspace first, then dispatch a standing squad.
+  - article:
+    - button "Document squad" [disabled]: Document squad Ready to dispatch 4 seats
+    - button "Roster seats" [expanded]
+    - list:
+      - listitem:
+        - code: archivist
+        - text: Archivist Model
+        - combobox "Model":
+          - option "Follow coordinator" [selected]
+          - option "DeepSeek / DeepSeek-V4-Flash"
+          - option "DeepSeek / DeepSeek-V4-Flash-Vision-Exp"
+      - listitem:
+        - code: drafter
+        - text: Drafter Model
+        - combobox "Model":
+          - option "Follow coordinator" [selected]
+          - option "DeepSeek / DeepSeek-V4-Flash"
+          - option "DeepSeek / DeepSeek-V4-Flash-Vision-Exp"
+      - listitem:
+        - code: metric-checker
+        - text: Metric checker Model
+        - combobox "Model":
+          - option "Follow coordinator" [selected]
+          - option "DeepSeek / DeepSeek-V4-Flash"
+          - option "DeepSeek / DeepSeek-V4-Flash-Vision-Exp"
+      - listitem:
+        - code: reviewer
+        - text: Reviewer Model
+        - combobox "Model":
+          - option "Follow coordinator" [selected]
+          - option "DeepSeek / DeepSeek-V4-Flash"
+          - option "DeepSeek / DeepSeek-V4-Flash-Vision-Exp"
+    - button "Assign work to this squad" [disabled]
+  - article:
+    - button "Case squad" [disabled]: Case squad Ready to dispatch 4 seats
+    - button "Roster seats"
+    - button "Assign work to this squad" [disabled]
+  - article:
+    - button "Comms squad" [disabled]: Comms squad Ready to dispatch 4 seats
+    - button "Roster seats"
+    - button "Assign work to this squad" [disabled]
+  - region "Conversation identity":
+    - button "Show avatars"
+    - group "Conversation identity":
+      - button "Ordinary chat" [pressed]
+      - button "Assistants"
+      - button "Teams"
+    - text: Ordinary chat Choose an assistant or open team collaboration

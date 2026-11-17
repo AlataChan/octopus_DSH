@@ -33,6 +33,7 @@ export interface TeamViewProps extends PropsLocale<typeof NS> {
   onUpdateSeat?: ((seatId: TeamSeatId, patch: TeamSeatUpdatePatch) => Promise<void> | void) | undefined
   onOpenDock?: (() => void) | undefined
   loadLiveView?: StandingTeamDockProps['loadLiveView']
+  renderRoom?: StandingTeamDockProps['renderRoom']
   discussionOps?: TeamDiscussionOps | undefined
   onTeamChanged?: (() => Promise<void>) | undefined
   onViewActivityLog?: ((seat: TeamSeat) => void) | undefined
@@ -58,6 +59,7 @@ export function TeamView({
   onUpdateSeat,
   onOpenDock,
   loadLiveView,
+  renderRoom,
   discussionOps,
   onTeamChanged,
   onViewActivityLog,
@@ -305,7 +307,7 @@ export function TeamView({
       </div>
 
       <StandingTeamDock open={dockOpen} team={team} seats={seats} profiles={profiles} t={t}
-        onClose={() => { setDockOpen(false) }} onViewActivityLog={onViewActivityLog} loadLiveView={loadLiveView} />
+        onClose={() => { setDockOpen(false) }} onViewActivityLog={onViewActivityLog} loadLiveView={loadLiveView} renderRoom={renderRoom} />
 
       {/* Editor Modal */}
       {showEditor && onSaveTeam && (

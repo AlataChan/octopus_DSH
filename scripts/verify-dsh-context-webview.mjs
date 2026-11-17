@@ -198,6 +198,15 @@ try {
     await page.waitForFunction(() => !window.__nativeModules.entries.loader.ctx.get('slots').entries('conversation.view').some(row => ['context', 'fleet'].includes(row.options.id)))
   }
   await verifyDesktopImSection(page, remote)
+  const squads = page.getByRole('region', { name: /^(Standing squads|机构常驻)$/ })
+  await squads.waitFor()
+  for (const name of [/^(Document squad|文书组)$/, /^(Case squad|案例组)$/, /^(Comms squad|传播部)$/]) {
+    await squads.getByRole('button', { name }).waitFor()
+  }
+  await page.locator('[data-assistant-selector]').waitFor()
+  assert.equal((await remote('agentTeams/listInstitutionSquads')).length, 3)
+  console.log('READY: packaged homepage retains all three built-in squads alongside the saved selector')
+  await page.screenshot({ path: '/tmp/octopus-default-teams-native-home.png' })
   assert.deepEqual(errors, [])
   assert.equal(deliveryError, undefined)
   assert.deepEqual(await page.evaluate(() => window.__nativeModules.entries.state.getSnapshot().failures), [])

@@ -5,6 +5,8 @@ import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import { mountAgentTeamUi } from './mount.ts'
 
 export { inject } from './mount.ts'
+export { TeamTopology, teamRoomCopy } from './TeamTopology.tsx'
+export type { TeamTopologyCopy, TeamTopologyProps, TeamRoomView, TeamRoomMember } from './TeamTopology.tsx'
 export type { TeamActionInjected, TeamActionProps, TeamActionResult } from './TeamAction.tsx'
 export type { InstitutionSquadsInjected, InstitutionSquadsProps } from './InstitutionSquads.tsx'
 export type { TeamKey } from './locales.ts'

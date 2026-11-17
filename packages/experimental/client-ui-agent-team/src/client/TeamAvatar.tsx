@@ -5,7 +5,7 @@ import css from './TeamAction.module.css'
 
 /**
  * Resolve a repeatable portrait seed; names and roster order never affect identity.
- * @param id - Durable member Session identifier.
+ * @param id - Durable member or saved-seat identifier.
  * @param role - Lead uses the same recognizable portrait in every team.
  * @returns An unsigned portrait seed.
  */
@@ -22,7 +22,7 @@ export function memberAvatarSeed(id: string, role: TeamMemberView['role']): numb
  * @param props.member - Member whose durable identity selects the portrait.
  * @returns An inline SVG with no external assets or image-loading failure path.
  */
-export function TeamAvatar({ member }: { member: Pick<TeamMemberView, 'id' | 'role'> }) {
+export function TeamAvatar({ member }: { member: { id: string; role: TeamMemberView['role'] } }) {
   const seed = memberAvatarSeed(member.id, member.role)
   const hue = seed % 360
   const hair = ['M18 31V25C18 8 47 8 47 27L43 32V23L27 20L22 33Z', 'M15 39V26C15 7 49 7 49 27V43L42 40V25L24 23V40Z', 'M18 30C10 10 40 7 48 20L45 30L41 24L24 23L21 32Z', 'M17 32V24C17 8 49 8 48 28L43 34V23C35 28 29 18 22 24V33Z'][(seed >>> 8) % 4]

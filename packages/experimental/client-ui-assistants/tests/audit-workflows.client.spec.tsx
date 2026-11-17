@@ -109,6 +109,51 @@ describe('Independent mounted workflow adapter controls', () => {
 })
 
 describe('Standing collaboration panel', () => {
+  it('seats the saved roster before its first task without inventing running sessions', async () => {
+    const operations = mountedOperations()
+    const worker = { ...profile, id: AssistantProfileId('budget-profile'), name: '预算核对员' }
+    const workerSeat: TeamSeat = { ...seat, id: TeamSeatId('budget-seat'), profileId: worker.id, role: 'teammate', name: 'budget-checker', duty: '核对本次预算' }
+    const loadLiveView = vi.fn(async () => undefined)
+    const rendered = render(<TeamView team={{ ...team, seatIds: [workerSeat.id] }} seats={[workerSeat]} profiles={[profile, worker]}
+      t={t} renderRoom={operations.renderRoom} loadLiveView={loadLiveView} />)
+    fireEvent.click(screen.getByTestId('open-dock-button'))
+    const panel = screen.getByTestId('standing-team-dock')
+    expect(panel.querySelectorAll('[data-room-seat]')).toHaveLength(2)
+    expect(panel.querySelectorAll('[data-status="unprovisioned"]')).toHaveLength(2)
+    expect(panel.querySelector('animateMotion')).toBeNull()
+    expect(loadLiveView).not.toHaveBeenCalled()
+    const location = panel.querySelector('[data-member-id="budget-seat"]')?.getAttribute('data-seat-index')
+    rendered.rerender(<TeamView team={{ ...team, leadSessionId: SessionId('unobserved-lead') }}
+      seats={[seat, { ...workerSeat, activeInstanceId: SessionId('unobserved-worker') }]} profiles={[profile, worker]}
+      t={t} renderRoom={operations.renderRoom} loadLiveView={loadLiveView} />)
+    await act(async () => {})
+    expect(panel.querySelectorAll('[data-status="unobserved"]')).toHaveLength(2)
+    expect(panel.querySelector('[data-member-id="budget-seat"]')?.getAttribute('data-seat-index')).toBe(location)
+
+  })
+
+  it('renders the shared live room from the mounted directory renderer in the saved-team entry', async () => {
+    const operations = mountedOperations()
+    const live: StandingTeamLiveView = {
+      members: [
+        { id: SessionId('room-lead'), name: 'lead', role: 'lead', status: 'inactive', diagnostics: [] },
+        { id: SessionId('room-analyst'), name: 'grant-analyst', description: '核对本次申报材料', role: 'teammate', status: 'running', diagnostics: [] },
+      ],
+      tasks: [], interactions: [{ id: 'actual-message', from: 'lead', to: 'grant-analyst', kind: 'message' }],
+    }
+    const worker = { ...profile, id: AssistantProfileId('live-worker') }
+    const workerSeat: TeamSeat = { ...seat, id: TeamSeatId('live-worker-seat'), profileId: worker.id, role: 'teammate',
+      name: 'grant-analyst', activeInstanceId: SessionId('room-analyst'), runtimeInstances: [SessionId('room-analyst')] }
+    render(<TeamView team={{ ...team, leadSessionId: SessionId('room-lead') }} seats={[seat, workerSeat]} profiles={[profile, worker]}
+      t={t} renderRoom={operations.renderRoom} loadLiveView={async () => live} />)
+    fireEvent.click(screen.getByTestId('open-dock-button'))
+    await waitFor(() => {
+      expect(screen.getByTestId('standing-team-dock').querySelectorAll('[data-room-seat]')).toHaveLength(2)
+    })
+    expect(screen.getByTestId('standing-team-dock').querySelector('[data-team-room]')?.textContent).toContain('grant-analyst')
+    expect(screen.getByTestId('standing-team-dock').querySelector('[data-edge-kind="message"]')).toBeTruthy()
+  })
+
   it('opens before any task exists, without a callback or provider provisioning', async () => {
     const loadLiveView = vi.fn(async () => ({ members: [], tasks: [], interactions: [] }))
     render(<TeamView team={team} seats={[seat]} profiles={[profile]} t={t} loadLiveView={loadLiveView} />)

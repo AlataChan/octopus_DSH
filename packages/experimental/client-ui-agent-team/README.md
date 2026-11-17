@@ -37,9 +37,9 @@ The Hero row occupies `conversation.hero.agentTeam`. It lists 文书组 / 案例
 
 Opening the panel calls `agentTeams/view`. Roster rows show durable names, runtime status, model, and diagnostics. Selecting a healthy teammate refreshes the existing direct-child catalog and opens the ordinary `{ parentSessionId, childSessionId, mode: 'continuable' }` address. History and later human prompts continue through the stable addressed-subagent conversation path; this package adds no Team-specific address field.
 
-The execution view places the Lead above its teammates, displays the recorded model, runtime state and assigned in-progress task, and shows completed/total shared tasks. Directed message paths, task dependencies and a compact handoff feed use the existing TeamView; the feed includes names and interaction kinds, without message bodies. Running members pulse while visible; new-message markers last 2.6 seconds across ordinary refreshes. Existing history and idle members remain static. Local and system reduced-motion preferences suppress movement without hiding state.
+The Team Room places the real roster around illustrated tables. Seats use durable member IDs: renaming, reordering, polling and reopening the panel preserve positions within the browser session; new members reuse vacancies, and larger rosters add tables without shrinking text. The room, table and decorative seated bodies are separate local WebP assets embedded in the Client bundle. Names, responsibilities, models, runtime indicators and assigned in-progress tasks come from TeamView rather than the artwork. Saved-team seats are also visible before execution, with explicit not-started or unavailable status instead of invented Session identities. The public Client exports TeamTopology and teamRoomCopy so the saved-team collaboration panel uses the same renderer and dictionary.
 
-Every member has an offline inline-SVG portrait derived from its durable Session ID; renaming, reordering and cold reload do not change it. The Lead uses a fixed portrait. No image service, downloaded assets or additional browser runtime is required. Idle members use neutral indicators; a completion banner appears only when all non-deleted tasks are complete and every member is idle. The summary action follows the task controls.
+The room shows up to three recent interaction routes with a compact handoff feed, without message bodies or inferred delivery acknowledgements. Running members pulse while visible; only newly observed message edges animate, for 2.6 seconds across ordinary refreshes. Historical messages, task dependencies and idle members remain static. Local and system reduced-motion preferences suppress movement without hiding state. Offline identity portraits remain derived from durable Session IDs. A completion banner appears only when all non-deleted tasks are complete and every member is idle; the summary action follows the task controls.
 
 Opening or explicitly revealing the dock positions the execution view once. Polling and manual refreshes retain the user's scroll position so the task controls and summary remain reachable.
 
@@ -94,7 +94,7 @@ No direct effect; the Team tools and ordinary conversation submission own any la
 
 <a id="known-limitations-and-deferred-work"></a>
 
-- **Snapshot refresh** — the panel refreshes on open, explicit refresh, and mutations; it has no live event subscription or mailbox timeline.
+- **Snapshot refresh** — the open panel polls every 1.5 seconds and refreshes after mutations; it has no live event subscription or message-body timeline.
 - **Ordinary child continuation** — a human message sent after navigation uses the stable addressed-subagent prompt path, not the Team peer mailbox.
 - **Dock cannot spawn** — the header dock still cannot create, rename, delete, or interrupt teammates. Standing seats are provisioned from the Hero institution row. Write scopes remain advisory metadata.
 

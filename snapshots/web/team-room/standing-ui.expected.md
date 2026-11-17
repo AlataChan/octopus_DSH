@@ -1,0 +1,26 @@
+- paragraph: Opening this panel does not start tasks or call a model.
+- region "Team room":
+  - strong: This round is complete
+  - text: Members are idle and ready for the next task. 2 / 2
+  - heading "Team room" [level=3]
+  - button "Reduce motion"
+  - button "Hide map"
+  - paragraph: Follow the lead, teammates, message handoffs, and shared task progress.
+  - strong: lead
+  - text: Lead Coordinate the recorded team Idle deepseek-v4-flash
+  - strong: notes-writer
+  - text: Teammate 写入 notes.md：恰好三行快照测试要点 Idle deepseek-v4-flash
+  - strong: summary-writer
+  - text: Teammate 读 notes.md 后写 summary.md（≤60 字中文总结） Idle deepseek-v4-flash 2/2 tasks completed
+  - progressbar "2/2 tasks completed"
+  - text: Handoffs notes-writer lead message summary-writer lead message notes-writer summary-writer task dep
+- group: Seats
+- heading "Member interactions" [level=3]
+- list:
+  - listitem: notes-writer → lead
+  - listitem: summary-writer → lead
+  - listitem: notes-writer → summary-writer
+- heading "Tasks" [level=3]
+- list:
+  - listitem: notes-writer：写入 notes.md（恰好三行快照测试要点） · notes-writer
+  - listitem: summary-writer：读取 notes.md 后在 summary.md 写 ≤60 字中文总结 · summary-writer

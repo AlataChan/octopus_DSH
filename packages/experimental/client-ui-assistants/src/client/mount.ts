@@ -1,3 +1,5 @@
+import { createElement } from 'react'
+import { TeamTopology, teamRoomCopy } from '@deepseek-ai/dsh-experimental-client-ui-agent-team/client'
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type { MainPanelId } from '@deepseek-ai/dsh-client-ui-layout/client'
 import type { ISessions } from '@deepseek-ai/dsh-api-session-controller/client'
@@ -633,6 +635,7 @@ export function registerUi(ctx: ClientContext, ops?: AssistantClientOps): void {
           loadSeats,
           loadModels,
           loadLiveView: activeOps.getTeamActivity,
+          renderRoom: view => createElement(TeamTopology, { view, copy: teamRoomCopy(ctx.locale.bind('agent-team')) }),
           discussionOps,
           onCreateProfile: async (data) => {
             if (!activeOps.createProfile) throw new Error(t('operationFailed'))
@@ -680,9 +683,9 @@ export function registerUi(ctx: ClientContext, ops?: AssistantClientOps): void {
     ),
   )
 
-  // The fork selector shadows the legacy expanded institution cards while this plugin is mounted.
-  ctx.slots.inject('conversation.hero.agentTeam', () => ctx.slots.register({
-    name: 'conversation.hero.agentTeam', priority: -10, locale: NS,
+  // Keep built-in standing squads visible alongside the saved assistant and team selector.
+  ctx.slots.inject('conversation.hero.agentTeam.card', () => ctx.slots.register({
+    name: 'conversation.hero.agentTeam.card', id: 'assistants.selector', locale: NS,
     inject: () => ({ ...selectorProps(), activeSession: {
       subscribe: (listener: () => void) => clientSessions.list.subscribe(listener),
       getSnapshot: () => {

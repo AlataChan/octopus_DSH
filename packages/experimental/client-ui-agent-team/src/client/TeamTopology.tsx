@@ -1,14 +1,16 @@
-/** Hierarchical execution view over real Team members, handoffs and task progress. */
+/** Team Room seats and handoffs projected from the real roster and task board. */
 
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import type {
   TeamInteractionEdge,
   TeamMemberView as TeamRosterMember,
-  TeamView,
+  TeamTaskView,
 } from '@deepseek-ai/dsh-experimental-agent-team/client'
 import { StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
-import { TeamAvatar } from './TeamAvatar.tsx'
-import type { TeamKey } from './locales.ts'
+import { TeamAvatar, memberAvatarSeed } from './TeamAvatar.tsx'
+import { ROOM_BACKGROUND_URL, ROOM_TABLE_URL, ROOM_WORKER_URL, ROOM_WORKER_ALT_URL } from './team-room-art.ts'
+import { NS, type TeamKey } from './locales.ts'
+import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import css from './TeamAction.module.css'
 
 const TOPOLOGY_PREF_KEY = 'dsh.client.agent-team.topology'
@@ -49,23 +51,41 @@ function writeReduceMotion(enabled: boolean): void {
   }
 }
 
-function memberStatusKey(status: TeamRosterMember['status']): TeamKey {
+function memberStatusKey(status: TeamRoomMember<string>['status']): TeamKey {
   switch (status) {
     case 'running': return 'memberStatus.running'
     case 'inactive': return 'memberStatus.inactive'
     case 'provisioning': return 'memberStatus.provisioning'
     case 'failed': return 'memberStatus.failed'
+    case 'unprovisioned': return 'memberStatus.unprovisioned'
+    case 'unobserved': return 'memberStatus.unobserved'
   }
 }
 
-function statusDot(status: TeamRosterMember['status']): 'done' | 'warning' | 'ongoing' | 'error' | 'idle' {
+function statusDot(status: TeamRoomMember<string>['status']): 'done' | 'warning' | 'ongoing' | 'error' | 'idle' {
   switch (status) {
     case 'running': return 'ongoing'
     case 'provisioning': return 'warning'
     case 'failed': return 'error'
     case 'inactive':
+    case 'unprovisioned':
+    case 'unobserved':
       return 'idle'
   }
+}
+
+/** One real runtime member or saved roster entry; its owner supplies the durable rendering identity. */
+export interface TeamRoomMember<Id extends string> extends Pick<TeamRosterMember, 'name' | 'role' | 'description' | 'model'> {
+  readonly id: Id
+  readonly status: TeamRosterMember['status'] | 'unprovisioned' | 'unobserved'
+}
+
+/** Read-only room data; planned seats carry no fabricated Session identity or execution state. */
+export interface TeamRoomView<Id extends string> {
+  readonly key?: Id
+  readonly members: readonly TeamRoomMember<Id>[]
+  readonly tasks: readonly TeamTaskView[]
+  readonly interactions: readonly TeamInteractionEdge[]
 }
 
 /** Locale-backed labels used by the topology strip. */
@@ -88,18 +108,21 @@ export interface TeamTopologyCopy {
   progress: (done: number, total: number) => string
 }
 
-export interface TeamTopologyProps {
-  view: TeamView
+export interface TeamTopologyProps<Id extends string = string> {
+  view: TeamRoomView<Id>
   copy: TeamTopologyCopy
   /** Incremented when the Team panel opens so the map is revealed and scrolled into view. */
   revealKey?: number
 }
 
 /**
- * Spatial view of the same TeamView the panel already loaded.
- * Mount only while the Team panel is open; no timers or second Host API.
+ * Display observed members or saved seats without starting sessions or fetching Host state.
+ * Seats retain their member IDs across refreshes and panel reopening in the same browser session.
+ * Mount only while the Team panel is open; no second Host API or background polling.
+ * @param props - Read-only room data, locale-owned labels and optional reveal request.
+ * @returns Spatial roster, task progress and recent interaction feed.
  */
-export function TeamTopology({ view, copy, revealKey = 0 }: TeamTopologyProps) {
+export function TeamTopology<Id extends string>({ view, copy, revealKey = 0 }: TeamTopologyProps<Id>) {
   const [canvas, setCanvas] = useState<HTMLDivElement | null>(null)
   const [canvasWidth, setCanvasWidth] = useState(600)
   const [enabled, setEnabled] = useState(readTopologyPref)
@@ -157,20 +180,31 @@ export function TeamTopology({ view, copy, revealKey = 0 }: TeamTopologyProps) {
     return () => { observer.disconnect() }
   }, [canvas])
 
-  const lead = view.members.find(member => member.role === 'lead')
-  const teammates = view.members.filter(member => member.role === 'teammate')
-  const layoutNames = [
-    ...lead === undefined ? [] : [lead.name],
-    ...teammates.map(member => member.name),
-  ]
-  const columns = Math.max(1, Math.min(teammates.length, canvasWidth < 390 ? 1 : 2))
-  const width = columns * 164
-  const height = teammates.length === 0 ? 130 : 160 + Math.ceil(teammates.length / columns) * 132 + 42
-  const positions = new Map<string, { x: number; y: number }>()
-  if (lead !== undefined) positions.set(lead.name, { x: width / 2, y: 8 })
-  teammates.forEach((member, index) => {
-    positions.set(member.name, { x: (index % columns + 0.5) * 164, y: 160 + Math.floor(index / columns) * 132 })
+  const teamKey = view.key ?? view.members.find(member => member.role === 'lead')?.id ?? view.members[0]?.id ?? ''
+  const seatCache = useRef<{ key: string; ids: string[] }>({ key: '', ids: [] })
+  const previousIds = seatCache.current.key === teamKey ? seatCache.current.ids : readSeatIds(teamKey)
+  const seatIds = assignSeats(view.members, previousIds)
+  const membersById = new Map<string, TeamRoomMember<Id>>(view.members.map(member => [member.id, member]))
+  const seats = seatIds.flatMap((id, slot) => {
+    const member = membersById.get(id)
+    return member === undefined ? [] : [{ member, slot, ...seatPosition(slot) }]
   })
+  const positions = new Map(seats.map(seat => [seat.member.name, { x: seat.x * canvasWidth, y: seat.y + 115 }]))
+  const tables = [...new Set(seats.map(seat => Math.floor(seat.slot / 5)))]
+  const lastTable = Math.max(0, ...tables)
+  const lastHasFrontSeats = seats.some(seat => Math.floor(seat.slot / 5) === lastTable && seat.slot % 5 > 2)
+  const height = lastTable * 640 + (lastHasFrontSeats ? 640 : 540)
+  const recentInteractions = view.interactions.filter(edge => positions.has(edge.from) && positions.has(edge.to)).slice(-3)
+
+  useEffect(() => {
+    seatCache.current = { key: teamKey, ids: seatIds }
+    if (teamKey === '') return
+    try {
+      sessionStorage.setItem(`dsh.client.agent-team.seats:${teamKey}`, JSON.stringify(seatIds))
+    } catch {
+      /* Seat placement still works in memory when storage is unavailable. */
+    }
+  }, [teamKey, seatIds])
   const tasks = view.tasks.filter(task => task.status !== 'deleted')
   const completed = tasks.filter(task => task.status === 'completed').length
   const settled = tasks.length > 0 && completed === tasks.length && view.members.length > 0
@@ -195,12 +229,18 @@ export function TeamTopology({ view, copy, revealKey = 0 }: TeamTopologyProps) {
       {!enabled ? null : (
         <>
           <p className={css.topologyHint}>{copy.hint}</p>
-          {layoutNames.length === 0 ? (
+          {seats.length === 0 ? (
             <p className={css.topologyEmpty}>{copy.empty}</p>
           ) : (
             <div className={css.topologyCanvas} ref={setCanvas}>
-              <div className={css.topologyScene} data-columns={columns} style={{ minWidth: width, height }}>
-                <svg className={css.topologySvg} viewBox={`0 0 ${width} ${height}`} style={{ height }} preserveAspectRatio="none" aria-hidden>
+              <div className={css.topologyScene} data-team-room style={{ height }}>
+                {tables.map(table => (
+                  <div key={table} className={css.roomEnvironment} style={{ top: table * 640 }} aria-hidden="true">
+                    <img className={css.roomBackground} src={ROOM_BACKGROUND_URL} alt="" />
+                    <img className={css.roomTable} data-room-table={table} src={ROOM_TABLE_URL} alt="" />
+                  </div>
+                ))}
+                <svg className={css.topologySvg} viewBox={`0 0 ${canvasWidth} ${height}`} style={{ height }} preserveAspectRatio="none" aria-hidden>
                   <defs>
                     <marker id={`${markerId}-message`} viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto">
                       <path d="M 0 0 L 8 4 L 0 8 Z" className={css.topologyMessageArrow} />
@@ -209,34 +249,43 @@ export function TeamTopology({ view, copy, revealKey = 0 }: TeamTopologyProps) {
                       <path d="M 0 0 L 8 4 L 0 8 Z" className={css.topologyTaskArrow} />
                     </marker>
                   </defs>
-                  {view.interactions.map((edge, lane) => renderEdge(edge, positions, flashIds.has(edge.id), copy, lane, markerId, width))}
+                  {recentInteractions.map((edge, lane) => renderEdge(edge, positions, flashIds.has(edge.id), lane, markerId))}
                 </svg>
-                {layoutNames.map((name) => {
-                  const member = view.members.find(row => row.name === name)
-                  const position = positions.get(name)
-                  if (member === undefined || position === undefined) return null
-                  const task = member.status === 'running' ? view.tasks.find(row => row.ownerName === name && row.status === 'in_progress') : undefined
+                {seats.map(({ member, slot, x, y }) => {
+                  const task = member.status === 'running' ? view.tasks.find(row => row.ownerName === member.name && row.status === 'in_progress') : undefined
                   return (
                     <div
                       key={member.id}
                       className={`${css.topologyNode}${member.status === 'running' ? ` ${css.topologyNodeActive}` : ''}`}
+                      data-room-seat
+                      data-member-id={member.id}
+                      data-seat-index={slot}
+                      data-seat-side={slot % 5 === 2 || slot % 5 === 4 ? 'right' : 'left'}
                       data-status={member.status}
                       data-role={member.role}
-                      style={{ left: `${position.x / width * 100}%`, top: position.y }}
+                      style={{ left: `${x * 100}%`, top: y }}
                     >
-                      <TeamAvatar member={member} />
-                      <div className={css.topologyMemberInfo}>
-                        <div className={css.topologyMemberHeading}><strong title={name}>{name}</strong><span className={css.topologyRole}>{member.role === 'lead' ? copy.leadRole : copy.workerRole}</span></div>
-                        {member.description !== undefined && (
-                          <span className={css.topologyDescription} title={member.description}>{member.description}</span>
-                        )}
-                        <span className={css.topologyMemberState}>
-                          <StateDot state={statusDot(member.status)} />
-                          {copy.memberStatus(memberStatusKey(member.status))}
-                        </span>
-                        {member.model !== undefined && <span className={css.topologyModel} title={member.model}>{member.model}</span>}
-                        {task !== undefined && <span className={css.topologyTask} title={task.subject}>{task.subject}</span>}
+                      <img
+                        className={css.roomWorker}
+                        src={memberAvatarSeed(member.id, member.role) % 2 === 0 ? ROOM_WORKER_URL : ROOM_WORKER_ALT_URL}
+                        alt=""
+                        aria-hidden="true"
+                      />
+                      <div className={css.roomNameplate}>
+                        <TeamAvatar member={member} />
+                        <div className={css.topologyMemberInfo}>
+                          <div className={css.topologyMemberHeading}><strong title={member.name}>{member.name}</strong><span className={css.topologyRole}>{member.role === 'lead' ? copy.leadRole : copy.workerRole}</span></div>
+                          {member.description !== undefined && (
+                            <span className={css.topologyDescription} title={member.description}>{member.description}</span>
+                          )}
+                          <span className={css.topologyMemberState}>
+                            <StateDot state={statusDot(member.status)} />
+                            {copy.memberStatus(memberStatusKey(member.status))}
+                          </span>
+                          {member.model !== undefined && <span className={css.topologyModel} title={member.model}>{member.model}</span>}
+                        </div>
                       </div>
+                      {task !== undefined && <span className={css.topologyTask} title={task.subject}>{task.subject}</span>}
                     </div>
                   )
                 })}
@@ -247,10 +296,10 @@ export function TeamTopology({ view, copy, revealKey = 0 }: TeamTopologyProps) {
                   <progress max={tasks.length} value={completed} aria-label={copy.progress(completed, tasks.length)} />
                 </div>
               )}
-              {view.interactions.length > 0 && (
+              {recentInteractions.length > 0 && (
                 <div className={css.topologyFeed} aria-label={copy.activityTitle}>
                   <span className={css.topologyFeedTitle}>{copy.activityTitle}</span>
-                  {view.interactions.slice(-3).map((edge) => {
+                  {recentInteractions.map((edge) => {
                     const source = view.members.find(member => member.name === edge.from)
                     const target = view.members.find(member => member.name === edge.to)
                     return (
@@ -279,24 +328,14 @@ function renderEdge(
   edge: TeamInteractionEdge,
   positions: ReadonlyMap<string, { x: number; y: number }>,
   flash: boolean,
-  copy: TeamTopologyCopy,
   lane: number,
   markerId: string,
-  width: number,
 ): ReactNode {
   const from = positions.get(edge.from)
   const to = positions.get(edge.to)
   if (from === undefined || to === undefined) return null
-  const sameRow = from.y === to.y
-  const sourceY = sameRow ? from.y + 106 : from.y < to.y ? from.y + 106 : from.y
-  const targetY = sameRow ? to.y + 106 : from.y < to.y ? to.y : to.y + 106
-  const bend = sameRow ? sourceY + 42 + (lane % 2) * 8 : (sourceY + targetY) / 2
-  const offset = sameRow ? 0 : (lane % 3 - 1) * 22
-  const routeAround = width < 250 && from.x === to.x && Math.abs(from.y - to.y) > 132
-  const path = routeAround
-    ? `M ${from.x + 66} ${from.y + 53} C ${width - 6} ${from.y + 53} ${width - 6} ${to.y + 53} ${to.x + 66} ${to.y + 53}`
-    : `M ${from.x} ${sourceY} C ${from.x + offset} ${bend} ${to.x + offset} ${bend} ${to.x} ${targetY}`
-  const label = edge.kind === 'message' ? copy.edgeMessage : copy.edgeTask
+  const bend = Math.max(from.y, to.y) + 45 + lane * 16
+  const path = `M ${from.x} ${from.y} C ${from.x} ${bend} ${to.x} ${bend} ${to.x} ${to.y}`
   return (
     <g key={edge.id} className={flash ? css.topologyEdgeFlash : undefined} data-edge-kind={edge.kind}>
       <path
@@ -304,11 +343,6 @@ function renderEdge(
         markerEnd={`url(#${markerId}-${edge.kind === 'message' ? 'message' : 'task'})`}
         className={edge.kind === 'message' ? css.topologyEdgeMessage : css.topologyEdgeTask}
       />
-      {!routeAround && (
-        <text x={(from.x + to.x) / 2 + offset} y={sameRow ? sourceY + 24 : bend - 7} className={css.topologyEdgeLabel}>
-          {label}
-        </text>
-      )}
       {flash && edge.kind === 'message' && (
         <circle r={5.5} className={css.topologyDot}>
           <animateMotion dur="1.25s" repeatCount="2" path={path} />
@@ -316,4 +350,61 @@ function renderEdge(
       )}
     </g>
   )
+}
+
+/** Read only validated local seat identities; the Host roster owns all member content. */
+function readSeatIds(teamKey: string): string[] {
+  try {
+    const value: unknown = JSON.parse(sessionStorage.getItem(`dsh.client.agent-team.seats:${teamKey}`) ?? '[]')
+    if (!Array.isArray(value) || !value.every((id: unknown) => typeof id === 'string')) return []
+    const occupied = value.filter(id => id !== '')
+    return new Set(occupied).size === occupied.length ? value : []
+  } catch {
+    return [] // Unavailable storage or a malformed preference does not prevent opening the room.
+  }
+}
+
+/** Keep surviving members in place and reuse vacancies for newly joined members. */
+function assignSeats<Id extends string>(members: readonly TeamRoomMember<Id>[], previous: readonly string[]): string[] {
+  const live = new Set<string>(members.map(member => member.id))
+  const ids = previous.map(id => live.has(id) ? id : '')
+  const lead = members.find(member => member.role === 'lead')
+  if (lead !== undefined && ids[0] !== lead.id) {
+    const displaced = ids[0]
+    const oldLead = ids.indexOf(lead.id)
+    if (oldLead >= 0) ids[oldLead] = ''
+    ids[0] = lead.id
+    if (displaced !== undefined && displaced !== '') ids.push(displaced)
+  }
+  for (const member of members) {
+    if (ids.includes(member.id)) continue
+    const vacancy = ids.indexOf('')
+    if (vacancy < 0) ids.push(member.id)
+    else ids[vacancy] = member.id
+  }
+  return ids
+}
+
+/** Each additional group gets its own table rather than shrinking portraits and text. */
+function seatPosition(slot: number): { x: number; y: number } {
+  const position = slot % 5
+  const x = position === 0 ? 0.5 : position % 2 === 1 ? 0.2 : 0.8
+  const y = position === 0 ? 20 : position <= 2 ? 175 : 375
+  return { x, y: Math.floor(slot / 5) * 640 + y }
+}
+
+/**
+ * Bind the shared room's copy to the Agent Teams dictionary for any entry point.
+ * @param t - Locale-owned Agent Teams translator.
+ * @returns Labels and formatters consumed by the room renderer.
+ */
+export function teamRoomCopy(t: PropsLocale<typeof NS>['t']): TeamTopologyCopy {
+  return {
+    title: t('topology'), settledTitle: t('teamCompletedTitle'), settledHint: t('teamIdleHint'),
+    hint: t('topologyHint'), show: t('topologyShow'), hide: t('topologyHide'), empty: t('topologyEmpty'),
+    edgeMessage: t('topologyEdgeMessage'), edgeTask: t('topologyEdgeTask'),
+    motionReduce: t('motionReduce'), motionFull: t('motionFull'), memberStatus: key => t(key),
+    leadRole: t('topologyLead'), workerRole: t('topologyWorker'), activityTitle: t('topologyActivity'),
+    progress: (done, total) => t('topologyProgress', { done, total }),
+  }
 }

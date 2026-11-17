@@ -19,12 +19,13 @@ import type { AssistantModelOption } from './models.ts'
 import { NS } from './locales.ts'
 import { AssistantDetailDrawer } from './AssistantDetailDrawer.tsx'
 import { TeamCreationModal, type CreateTeamPayload } from './TeamCreationModal.tsx'
-import { TeamView } from './TeamView.tsx'
+import { TeamView, type TeamViewProps } from './TeamView.tsx'
 import type { SaveTeamUpdatesPayload, TeamSeatUpdatePatch } from './TeamEditorModal.tsx'
 import css from './AssistantDirectory.module.css'
 
 /** Injected operations for Assistant Directory. */
 export interface AssistantDirectoryInjected {
+  renderRoom?: TeamViewProps['renderRoom']
   teamRequest?: {
     subscribe: (listener: () => void) => () => void
     getSnapshot: () => { teamId: TeamDefinitionId; seq: number } | undefined
@@ -92,6 +93,7 @@ export function AssistantDirectory({
   onSaveTeam,
   onUpdateSeat,
   loadLiveView,
+  renderRoom,
   discussionOps,
   onOpenDock,
   onViewActivityLog,
@@ -434,6 +436,7 @@ export function AssistantDirectory({
             seats={seatsByTeam.get(selectedTeam.id) ?? []}
             profiles={profiles}
             models={models}
+            renderRoom={renderRoom}
             onSaveTeam={async (updates) => { await onSaveTeam?.(selectedTeam.id, selectedTeam.revision, updates); await refresh() }}
             onUpdateSeat={onUpdateSeat}
             discussionOps={discussionOps}
