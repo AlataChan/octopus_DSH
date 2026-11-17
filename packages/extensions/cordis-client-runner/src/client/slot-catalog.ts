@@ -804,7 +804,6 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
     declaredBy: 'factory \'conversation.content\' (client-ui-conversation), so it exists while that definition is registered',
     occupants: [
       'experimental-client-ui-agent-team InstitutionSquads',
-      'experimental-client-ui-assistants AssistantHeroSelector',
     ],
     replaceRisk: 'shadows-shipped-ui',
     example: 'return {\n  inject: [\'slots\'],\n  apply(ctx) {\n    ctx.slots.inject(\'conversation.hero.agentTeam\', () => ctx.slots.register(\n      { name: \'conversation.hero.agentTeam\' },\n      () => React.createElement(\'div\', null, \'hello\'),\n    ))\n  },\n}',
@@ -851,7 +850,9 @@ export const CLIENT_SLOT_API: readonly ClientSlotEntry[] = [
     hookContext: '',
     slotInject: '',
     declaredBy: 'an entry in \'conversation.hero.agentTeam\' (experimental-client-ui-agent-team), so it exists while that entry is mounted',
-    occupants: [],
+    occupants: [
+      'experimental-client-ui-assistants AssistantHeroSelector id \'assistants.selector\'',
+    ],
     replaceRisk: 'none',
     example: 'return {\n  inject: [\'slots\'],\n  apply(ctx) {\n    ctx.slots.inject(\'conversation.hero.agentTeam.card\', () => ctx.slots.register(\n      { name: \'conversation.hero.agentTeam.card\', id: \'my-entry\', order: 100, label: \'My entry\' },\n      () => React.createElement(\'div\', null, \'hello\'),\n    ))\n  },\n}',
     source: 'packages/experimental/client-ui-agent-team/src/client/InstitutionSquads.tsx:42',
