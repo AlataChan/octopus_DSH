@@ -179,13 +179,10 @@ rm -rf "$PRESET_RESOURCES"
 mkdir -p "$PRESET_RESOURCES"
 
 # Copy the env-ngo preset if available
-ENV_NGO_SRC="$HOME/Documents/4.0 Sanyuan/2.4 环境公益\"新\"力量/course/dsh-env-ngo/presets/env-ngo-project-assistant"
-if [[ -d "$ENV_NGO_SRC" ]]; then
-  cp -R "$ENV_NGO_SRC" "$PRESET_RESOURCES/env-ngo-project-assistant"
-  ok "公益项目助手 preset bundled"
-else
-  info "env-ngo preset not found at source, skipping"
-fi
+ENV_NGO_SRC="${DSH_DESKTOP_NGO_PRESET_DIR:-$REPO_ROOT/packages/experimental/desktop-ngo/preset/env-ngo-project-assistant}"
+[[ -f "$ENV_NGO_SRC/preset.yml" ]] || fail "Missing NGO preset at $ENV_NGO_SRC"
+cp -R "$ENV_NGO_SRC" "$PRESET_RESOURCES/env-ngo-project-assistant"
+ok "公益项目助手 preset bundled"
 
 info "Fetching desktop profile plugins..."
 PLUGIN_RESOURCES="$RESOURCES/profile-plugins"
