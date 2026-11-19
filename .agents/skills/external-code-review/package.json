@@ -1,0 +1,6 @@
+{
+  "name": "external-code-review",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Read-only desktop delegation to the current user's Codex and CodeBuddy CLIs"
+}
