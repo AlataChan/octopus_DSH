@@ -44,6 +44,7 @@ Removing the package withdraws the provider and its private runtime closure on t
 | Field | Default | Meaning |
 |---|---|---|
 | `providerName` | `codex` | Non-empty registry name on `ctx.subagents`; each mounted instance needs a unique value |
+| `executable` | Bundled Codex | Optional path to the profile owner’s installed Codex CLI supporting `app-server --stdio` |
 | `model` | native Codex settings | Optional non-empty model name fixed for every thread from this provider instance; omission sends no app-server override |
 | `env` | `{}` | Explicit child environment layered over the credential-scrubbed parent environment |
 | `permissionMode` | `never` | Native non-interactive approval and sandbox mode fixed for every thread from this provider instance |
@@ -51,6 +52,7 @@ Removing the package withdraws the provider and its private runtime closure on t
 
 | `permissionMode` value | `thread/start` fields | Native behavior |
 |---|---|---|
+| `read-only` | `approvalPolicy: never`, `sandbox: read-only` | Review workspace files without modifying them |
 | `never` | `approvalPolicy: never`; sandbox omitted | Never ask for approval; execution failures return to the model under the native sandbox |
 | `approve-for-me` | `approvalPolicy: on-request`, `approvalsReviewer: auto_review`, `sandbox: workspace-write` | Route permission requests through Codex automatic review without a human |
 | `dangerously-bypass-approvals-and-sandbox` | `approvalPolicy: never`, `sandbox: danger-full-access` | Skip approval and sandbox enforcement; this value must be selected explicitly |
@@ -139,7 +141,7 @@ Read these pages when the package-level contract is not enough. They move from t
 
 #### What the model sees
 
-The Codex child receives the standalone text blocks as one turn in a fresh ephemeral thread. Its workspace is the parent Session cwd; the selected Provider instance fixes any configured model, environment, non-interactive approval policy, and sandbox mode, while an omitted model and every other product setting come from native Codex configuration. The executable version comes from the Bundle's pinned platform payload.
+The Codex child receives the standalone text blocks as one turn in a fresh ephemeral thread. Its workspace is the parent Session cwd; the selected Provider instance fixes any configured model, environment, non-interactive approval policy, and sandbox mode, while an omitted model and every other product setting come from native Codex configuration. The executable defaults to the Bundle’s pinned payload. Profiles can select their installed CLI with `executable`.
 
 #### Token effect
 

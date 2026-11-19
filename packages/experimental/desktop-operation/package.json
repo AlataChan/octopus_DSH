@@ -20,7 +20,11 @@
       "default": "./lib/client.js"
     },
     "./src/*": "./src/*",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./external-review": {
+      "types": "./lib/types/external-review.d.ts",
+      "default": "./lib/external-review.js"
+    }
   },
   "files": [
     "lib/index.js",
@@ -30,7 +34,8 @@
     "preset/**",
     "native/LICENSE",
     "native/PIN.json",
-    "lib/types/**/*.d.ts"
+    "lib/types/**/*.d.ts",
+    "lib/external-review.js"
   ],
   "scripts": {
     "bundle": "tsc -b tsconfig.json && tsdown"
@@ -59,7 +64,8 @@
     "@deepseek-ai/cordis-plugin-include": "workspace:~",
     "@deepseek-ai/dsh-agent-preset-registry": "workspace:*",
     "@deepseek-ai/dsh-home-paths": "workspace:*",
-    "@deepseek-ai/dsh-agent": "workspace:*"
+    "@deepseek-ai/dsh-agent": "workspace:*",
+    "@deepseek-ai/dsh-tools": "workspace:*"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "workspace:~",
@@ -71,6 +77,7 @@
     "@deepseek-ai/dsh-tools": "workspace:*",
     "@modelcontextprotocol/server": "2.0.0",
     "zod": "^4.4.3",
-    "@deepseek-ai/dsh-agent": "workspace:*"
+    "@deepseek-ai/dsh-agent": "workspace:*",
+    "@deepseek-ai/dsh-subprocess": "workspace:*"
   }
 }

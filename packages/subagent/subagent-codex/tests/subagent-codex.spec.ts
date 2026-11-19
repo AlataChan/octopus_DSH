@@ -627,6 +627,7 @@ describe('task admission and package contracts', () => {
 
   it.each([
     ['never', { approvalPolicy: 'never' }],
+    ['read-only', { approvalPolicy: 'never', sandbox: 'read-only' }],
     ['approve-for-me', {
       approvalPolicy: 'on-request',
       approvalsReviewer: 'auto_review',

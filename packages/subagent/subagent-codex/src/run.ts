@@ -54,12 +54,14 @@ const CODEX_PACKAGE_BIN = resolve(
 
 /** Profile-selectable non-interactive Codex permission mode. */
 export type CodexPermissionMode =
+  | 'read-only'
   | 'never'
   | 'approve-for-me'
   | 'dangerously-bypass-approvals-and-sandbox'
 
 /** Native non-interactive Codex modes mapped to official `thread/start` fields. */
 export const CODEX_PERMISSION_MODES = [
+  'read-only',
   'never',
   'approve-for-me',
   'dangerously-bypass-approvals-and-sandbox',
@@ -138,6 +140,8 @@ export function codexAppServerArgv(): string[] {
 
 /** Fully resolved inputs for one Codex app-server run. */
 export interface CodexRunSpec {
+  /** User-installed Codex CLI selected by the profile. */
+  readonly executable?: string
   /** Parent Session workspace, also supplied to `thread/start`. */
   readonly cwd: string
   /** Profile-selected native model; omitted to preserve Codex settings. */
@@ -234,7 +238,7 @@ export async function startCodexRun(
   let child: SubprocessHandle
   try {
     child = spec.spawn({
-      argv: codexAppServerArgv(),
+      argv: spec.executable ? [spec.executable, 'app-server', '--stdio'] : codexAppServerArgv(),
       cwd: spec.cwd,
       stdio: { stdin: 'pipe', stdout: 'pipe', stderr: 'pipe' },
       graceMs: spec.disposeGraceMs,

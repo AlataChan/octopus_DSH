@@ -34,6 +34,8 @@ const DEFAULT_PROVIDER_NAME = 'codex'
 
 /** Deployment-owned model, permission, environment, and process-release settings. */
 export interface Config {
+  /** Optional local Codex CLI selected by the profile owner. */
+  executable?: string
   /** Provider name on `ctx.subagents` (default `codex`). */
   providerName?: string
   /** Native Codex model fixed for this instance; omitted to inherit Codex settings. */
@@ -50,6 +52,7 @@ export interface Config {
 }
 
 export const Config: z<Config> = z.object({
+  executable: z.string().min(1),
   providerName: z.string().min(1).default(DEFAULT_PROVIDER_NAME),
   model: z.string().min(1),
   env: z.dict(z.string()).default({}),
@@ -58,7 +61,7 @@ export const Config: z<Config> = z.object({
   disposeGraceMs: z.number().default(DEFAULT_DISPOSE_GRACE_MS),
 })
 
-type ResolvedConfig = Omit<Required<Config>, 'model'> & Pick<Config, 'model'>
+type ResolvedConfig = Omit<Required<Config>, 'model' | 'executable'> & Pick<Config, 'model' | 'executable'>
 
 class CodexProvider implements SubagentProvider {
   readonly capabilities: SubagentCapabilities = NO_START_CAPABILITIES
@@ -94,6 +97,7 @@ class CodexProvider implements SubagentProvider {
     }
     const spec: CodexRunSpec = {
       cwd,
+      ...(this.config.executable ? { executable: this.config.executable } : {}),
       ...this.config.model === undefined ? {} : { model: this.config.model },
       permissionMode: this.config.permissionMode,
       env: this.config.env,
@@ -116,6 +120,7 @@ class CodexProvider implements SubagentProvider {
  */
 export function apply(ctx: Context, config: Config): void {
   const resolved: ResolvedConfig = {
+    ...(config.executable ? { executable: config.executable } : {}),
     providerName: config.providerName ?? DEFAULT_PROVIDER_NAME,
     ...config.model === undefined ? {} : { model: config.model },
     env: config.env as Record<string, string>,

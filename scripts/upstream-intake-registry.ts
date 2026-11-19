@@ -357,6 +357,8 @@ export const PATCHES: readonly PatchEntry[] = [
   { path: 'packages/experimental/client-ui-assistants/src/client/mount.ts', klass: 'A', reason: 'Shares the dynamic Team Room with the saved-team collaboration entry and declares its Client dependency.' },
   { path: 'packages/experimental/client-ui-assistants/tests/audit-workflows.client.spec.tsx', klass: 'A', reason: 'Shares the dynamic Team Room with the saved-team collaboration entry and declares its Client dependency.' },
   { path: 'snapshots/web/team-room/home-ui.expected.md', klass: 'A', reason: 'Restores built-in standing squads alongside the saved selector and records the composed homepage.' },
+  { path: 'packages/subagent/subagent-codex/src/index.ts', klass: 'A', reason: 'Allows profiles to select an installed Codex CLI and request a read-only ephemeral thread.' },
+  { path: 'packages/subagent/subagent-codex/src/run.ts', klass: 'A', reason: 'Allows profiles to select an installed Codex CLI and request a read-only ephemeral thread.' },
   { path: 'packages/client/file-upload/src/client/index.ts', klass: 'A', reason: 'Routes process-owned file bodies through the declared upload Remote and verifies cancellation plus packaged composer PDF intake.' },
   { path: 'packages/client/file-upload/src/client/runtime.ts', klass: 'A', reason: 'Routes process-owned file bodies through the declared upload Remote and verifies cancellation plus packaged composer PDF intake.' },
   { path: 'packages/client/file-upload/src/client/contract.ts', klass: 'A', reason: 'Routes process-owned file bodies through the declared upload Remote and verifies cancellation plus packaged composer PDF intake.' },

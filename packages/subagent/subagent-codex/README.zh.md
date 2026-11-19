@@ -44,6 +44,7 @@ dsh --profile <name>
 | 字段 | 默认值 | 含义 |
 |---|---|---|
 | `providerName` | `codex` | `ctx.subagents` 上的非空注册名称；每个已挂载实例都需要唯一值 |
+| `executable` | 随包 Codex | 可选，指定本机支持 `app-server --stdio` 的 Codex CLI 路径 |
 | `model` | Codex 原生设置 | 为本提供方实例的每个线程固定的可选非空模型名称；省略时不发送 app-server 覆盖 |
 | `env` | `{}` | 叠加在已清理凭据的父环境之上的显式子进程环境 |
 | `permissionMode` | `never` | 为本提供方实例的每个线程固定的原生非交互审批与沙箱模式 |
@@ -51,6 +52,7 @@ dsh --profile <name>
 
 | `permissionMode` 值 | `thread/start` 字段 | 原生行为 |
 |---|---|---|
+| `read-only` | `approvalPolicy: never`，`sandbox: read-only` | 只读审查工作区文件 |
 | `never` | `approvalPolicy: never`；省略 sandbox | 永不请求审批；在原生 sandbox 下发生的执行失败会返回给模型 |
 | `approve-for-me` | `approvalPolicy: on-request`、`approvalsReviewer: auto_review`、`sandbox: workspace-write` | 由 Codex 自动评审权限请求，不等待人工 |
 | `dangerously-bypass-approvals-and-sandbox` | `approvalPolicy: never`、`sandbox: danger-full-access` | 跳过审批与 sandbox；必须显式选择该值 |
@@ -139,7 +141,7 @@ dsh --profile <name>
 
 #### 模型看到什么
 
-Codex 子级会在一个全新的临时线程中，以单个轮次接收这些独立文本块。它的工作区是父会话 cwd；所选提供方实例会固定已配置的模型、环境、非交互审批策略与沙箱模式，而省略的模型及其余产品设置来自 Codex 原生配置。可执行版本来自 Bundle 锁定的平台载荷。
+Codex 子级会在一个全新的临时线程中，以单个轮次接收这些独立文本块。它的工作区是父会话 cwd；所选提供方实例会固定已配置的模型、环境、非交互审批策略与沙箱模式，而省略的模型及其余产品设置来自 Codex 原生配置。默认使用 Bundle 锁定的可执行版本；Profile 可以通过 `executable` 选择本机 CLI。
 
 #### Token 影响
 

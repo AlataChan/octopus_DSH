@@ -11,6 +11,8 @@ English | [中文](README.zh.md)
 
 `desktop-operation` is a dedicated agent preset for one shared macOS desktop. Selecting it gives that Agent its own mcp-client against the pinned agent-desktop 1.2.0 binary and the packaged `agent-desktop` skill. The shared preset tree does not start the server. The standard preset is unchanged, and this package does not insert an MCP client at the profile root.
 
+Desktop chats can request read-only reviews from the current user’s Codex or CodeBuddy CLI. Each tool checks installation and login independently before delegation. A status-only call sends no model prompt.
+
 ## Table of Contents
 
 - [Use this package](#use-this-package)

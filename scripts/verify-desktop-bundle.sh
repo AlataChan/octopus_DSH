@@ -33,6 +33,12 @@ else
   bad "Tauri binary missing at Contents/MacOS/dsh-desktop"
 fi
 
+if "$RES/node" "$REPO_ROOT/scripts/verify-desktop-external-review.mjs" "$RES"; then
+  ok "Packaged Codex and CodeBuddy independently detect login and network failures"
+else
+  bad "External review tools failed the clean-user probe"
+fi
+
 if [[ -f "$RES/installed-runtime-cli.js" ]]; then
   ok "installed-runtime-cli.js bundled"
 elif [[ -f "$APP/Contents/Resources/installed-runtime-cli.js" ]]; then

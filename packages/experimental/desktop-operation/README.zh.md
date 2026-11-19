@@ -11,6 +11,8 @@ kind: "package-bundle"
 
 `desktop-operation` 是专用 Agent 预设，独占一台 macOS 桌面。选中它的 Agent 会启动自己的 mcp-client，连接固定的 agent-desktop 1.2.0 二进制，并挂上随包的 `agent-desktop` 技能。共享的预设树不启动服务器。standard 预设保持不变，本包也不在 profile 根插入 MCP client。
 
+桌面聊天可委派当前用户的 Codex 或 CodeBuddy CLI 进行只读审查。两个工具分别在委派前检查安装和登录状态。只查询状态时不会发送模型请求。
+
 ## 目录
 
 - [使用此包](#use-this-package)

@@ -3,3 +3,5 @@
 - insert:
     - id: desktop-operation
       name: '@deepseek-ai/dsh-experimental-desktop-operation'
+    - id: desktop-external-review
+      name: '@deepseek-ai/dsh-experimental-desktop-operation/external-review'

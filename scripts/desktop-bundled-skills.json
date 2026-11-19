@@ -1,6 +1,11 @@
 {
   "skills": [
     {
+      "name": "external-code-review",
+      "path": ".agents/skills/external-code-review",
+      "requiredText": [{ "file": "SKILL.md", "text": "desktop_review_codebuddy" }]
+    },
+    {
       "name": "wechat-article-extractor",
       "path": ".agents/skills/wechat-article-extractor",
       "requiredFiles": ["scripts/rate-limit.js"],
