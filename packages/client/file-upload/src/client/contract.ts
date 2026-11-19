@@ -15,7 +15,7 @@ export interface FileUploadProgress {
 export interface FileUploadService {
   /**
    * Store one file for a Session. Blob and stream bodies use
-   * the background carrier; exact bytes use Remote.
+   * the background carrier on served pages. Process-owned pages buffer them for Remote; exact bytes always use Remote.
    * @param sessionId - Session that owns the staged receipt.
    * @param data - browser Blob, exact bytes, or a one-shot byte stream.
    * @param name - optional display name.

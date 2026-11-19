@@ -1,4 +1,4 @@
-/** Background browser upload implementation for Blob and byte-stream bodies. */
+/** Browser file uploads over streamed HTTP or the owning process Remote. */
 
 import { Service, type Context } from '@deepseek-ai/cordis'
 import { bytesToBase64 } from '@deepseek-ai/dsh-util-crypto'
@@ -153,20 +153,24 @@ export function fileUploadWorker(
 
 interface ClientFileUploadGlobal {
   __DSH_FILE_UPLOAD__?: ClientFileUploadHooks
+  __DSH_TRANSPORT__?: { readonly ownsHost?: boolean }
 }
 
 interface FileUploadTransport {
   post(request: FileUploadRequest): Promise<FileUploadResponse>
 }
 
-/** Cordis service that owns one background carrier per upload operation. */
+/** Client file intake through page Fetch, browser Workers, or the owning process Remote. */
 export class FileUploadRuntime extends Service implements FileUploadService {
   private readonly transport: FileUploadTransport
+  private readonly remoteBodies: boolean
 
   /** @param ctx - providing Client context. */
   constructor(ctx: Context) {
     super(ctx, 'fileUpload')
-    const hook = (globalThis as ClientFileUploadGlobal).__DSH_FILE_UPLOAD__
+    const page = globalThis as ClientFileUploadGlobal
+    const hook = page.__DSH_FILE_UPLOAD__
+    this.remoteBodies = hook === undefined && page.__DSH_TRANSPORT__?.ownsHost === true
     this.transport = hook === undefined ? workerTransport() : customTransport(hook.fetch)
   }
 
@@ -180,7 +184,7 @@ export class FileUploadRuntime extends Service implements FileUploadService {
   }
 
   /**
-   * Store one file for a Session.
+   * Store one file for a Session using its page carrier or the owning process RPC.
    * @param sessionId - Session that owns the staged receipt.
    * @param data - browser Blob, exact bytes, or a one-shot byte stream.
    * @param name - optional display name.
@@ -195,7 +199,8 @@ export class FileUploadRuntime extends Service implements FileUploadService {
     signal?: AbortSignal,
     onProgress?: (progress: { readonly loaded: number; readonly total?: number }) => void,
   ): Promise<RemoteResult<FileUploadValue>> {
-    if (!(data instanceof Uint8Array)) {
+    signal?.throwIfAborted()
+    if (!(data instanceof Uint8Array) && !this.remoteBodies) {
       const query = new URLSearchParams({ sessionId })
       if (name !== undefined) query.set('name', name)
       const response = await this.post({
@@ -210,15 +215,43 @@ export class FileUploadRuntime extends Service implements FileUploadService {
       }
       return parseFileUploadResult(response.body)
     }
+    const bytes = data instanceof Uint8Array ? data : await readRemoteBody(data, signal, onProgress)
+    signal?.throwIfAborted()
     return (this.ctx as FileUploadRemoteContext).remote.fileUploads.upload(
       sessionId,
       {
-        data: bytesToBase64(data),
+        data: bytesToBase64(bytes),
         ...(name === undefined ? {} : { name }),
       },
       signal,
     )
   }
+}
+
+/** Buffer process-carried bodies with native stream cancellation; Remote admission enforces the RPC budget. */
+async function readRemoteBody(
+  data: Blob | ReadableStream<Uint8Array>,
+  signal: AbortSignal | undefined,
+  onProgress: ((progress: { readonly loaded: number; readonly total?: number }) => void) | undefined,
+): Promise<Uint8Array> {
+  const blob = data instanceof Blob
+  const source = blob ? data.stream() : data
+  const chunks: Uint8Array[] = []
+  let loaded = 0
+  await source.pipeTo(new WritableStream<Uint8Array>({
+    write(chunk) {
+      chunks.push(chunk.slice())
+      loaded += chunk.byteLength
+      onProgress?.({ loaded, ...(blob ? { total: data.size } : {}) })
+    },
+  }), signal === undefined ? undefined : { signal })
+  const bytes = new Uint8Array(loaded)
+  let offset = 0
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return bytes
 }
 
 function customTransport(customFetch: FileUploadFetch): FileUploadTransport {

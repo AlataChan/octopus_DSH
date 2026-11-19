@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-This package lets browser features store a `Blob`, exact bytes, or a `ReadableStream<Uint8Array>` for one Session and receive an opaque receipt for a later prompt. Served pages send Blob and stream bodies without aggregating their bytes on the page thread; pages whose Host runs in another execution context supply a Fetch-shaped carrier before Cordis boots. Callers can observe consumed bytes and cancel an active operation. A stream body is consumed once and transfers ownership when it crosses a Worker boundary. Exact bytes use the generated Remote.
+This package stores browser files for a Session and returns staged receipts for later prompts. It selects browser HTTP, a supplied upload Fetch hook, or process-owned Remote intake before consuming the body. Callers can observe consumed bytes and cancel an active upload.
 
 ## Table of Contents
 
@@ -32,7 +32,7 @@ Mount the package before a consumer that injects `fileUpload`, then call `ctx.fi
   name: '@deepseek-ai/dsh-client-file-upload'
 ```
 
-The package has no Cordis configuration fields. A `Blob` uses XMLHttpRequest inside a dedicated Worker so the service can report browser upload progress, including the total when the browser provides it. A `ReadableStream` transfers to that Worker and feeds Fetch incrementally; progress reports consumed bytes without a total. An `AbortSignal` terminates the dedicated Worker or reaches a page-owned carrier. Exact bytes use the generated Remote.
+The package has no Cordis configuration fields. A `Blob` uses XMLHttpRequest inside a dedicated Worker so the service can report browser upload progress, including the total when the browser provides it. A `ReadableStream` transfers to that Worker and feeds Fetch incrementally; progress reports consumed bytes without a total. An `AbortSignal` terminates the dedicated Worker or reaches a page-owned carrier. Exact bytes use the generated Remote. When the page transport owns the Host, such as desktop IPC, Blob and stream bodies are collected with cancellation and byte progress, then sent through that same Remote within the process carrier message budget. An explicit file-upload Fetch hook takes precedence. The generated `remote.fileUploads` namespace is a required Client dependency.
 
 -----
 

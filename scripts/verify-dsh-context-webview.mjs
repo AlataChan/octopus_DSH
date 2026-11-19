@@ -41,6 +41,8 @@ let rejectBridgeFailure
 const bridgeFailure = new Promise((_, reject) => { rejectBridgeFailure = reject })
 void bridgeFailure.catch(error => { deliveryError ??= error })
 const files = new Map()
+const desktopCsp = JSON.parse(readFileSync(join(root, 'apps/desktop/src-tauri/tauri.conf.json'), 'utf8')).app.security.csp
+assert.equal(typeof desktopCsp, 'string')
 const env = {
   HOME: home, DSH_HOME: join(home, '.dsh'), PATH: `${dirname(target.node)}:/usr/bin:/bin:/usr/sbin:/sbin`,
   DSH_DESKTOP_HARNESS_HOME: home, DSH_DESKTOP_HARNESS_CONFIG: join(temp, 'config'),
@@ -126,7 +128,7 @@ try {
       assert(files.has(path) || !relative(assets, realpathSync(file)).startsWith('..'), 'Asset escaped desktop build')
       const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.svg': 'image/svg+xml' }
       res.setHeader('Content-Type', types[extname(file)] ?? 'application/octet-stream')
-      res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'")
+      res.setHeader('Content-Security-Policy', desktopCsp)
       res.end(readFileSync(file))
     } catch (error) { res.writeHead(404); res.end(String(error)) }
   })
@@ -207,6 +209,31 @@ try {
   assert.equal((await remote('agentTeams/listInstitutionSquads')).length, 3)
   console.log('READY: packaged homepage retains all three built-in squads alongside the saved selector')
   await page.screenshot({ path: '/tmp/octopus-default-teams-native-home.png' })
+  const uploadName = 'Desktop-upload-verification.pdf'
+  let pdf = '%PDF-1.4\n'
+  const offsets = [0]
+  for (const object of ['<< /Type /Catalog /Pages 2 0 R >>', '<< /Type /Pages /Kids [3 0 R] /Count 1 >>', '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] >>']) {
+    offsets.push(Buffer.byteLength(pdf))
+    pdf += `${offsets.length - 1} 0 obj\n${object}\nendobj\n`
+  }
+  pdf += '%' + 'x'.repeat(5 * 1024 * 1024) + '\n'
+  const xref = Buffer.byteLength(pdf)
+  pdf += 'xref\n0 4\n0000000000 65535 f \n' + offsets.slice(1).map(offset => `${String(offset).padStart(10, '0')} 00000 n \n`).join('') + `trailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`
+  const pdfBytes = Buffer.from(pdf)
+  await page.locator('input[type="file"]').setInputFiles({ name: uploadName, mimeType: 'application/pdf', buffer: pdfBytes })
+  const uploadCard = page.getByTitle(uploadName, { exact: true })
+  await uploadCard.getByText(/^PDF\s/).waitFor()
+  assert.equal(await uploadCard.getByRole('button', { name: /^Retry uploading/ }).count(), 0)
+  const uploadWorkspace = await remote('workspace/create', { request: { path: workspace } })
+  const uploadSession = await remote('session/create', { request: { workspaceId: uploadWorkspace.workspace.workspaceId } })
+  const uploaded = await page.evaluate(async ({ sessionId, data, name }) => {
+    const bytes = Uint8Array.from(atob(data), c => c.charCodeAt(0))
+    return window.__nativeModules.entries.loader.ctx.get('fileUpload').upload(sessionId, bytes, name)
+  }, { sessionId: uploadSession.sessionId, data: pdfBytes.toString('base64'), name: uploadName })
+  assert.equal(uploaded.ok, true)
+  assert.equal(uploaded.value.file.bytes, pdfBytes.length)
+  assert.equal(uploaded.value.file.attachmentId, 'sha256:' + createHash('sha256').update(pdfBytes).digest('hex'))
+  console.log('READY: packaged composer uploaded a 5 MiB PDF under desktop CSP; exact-byte Remote stored matching bytes and digest')
   assert.deepEqual(errors, [])
   assert.equal(deliveryError, undefined)
   assert.deepEqual(await page.evaluate(() => window.__nativeModules.entries.state.getSnapshot().failures), [])

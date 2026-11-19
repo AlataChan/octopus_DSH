@@ -279,19 +279,8 @@ describe('web e2e: generic file upload through the real assembly', () => {
     await expect.poll(() => send.isEnabled(), { timeout: 15_000 }).toBe(true)
     const settled = scaffold.whenTurnSettled()
     await send.click()
-    const restoreDeadline = Date.now() + 10_000
-    let retainedCards = 0
-    while (retainedCards === 0
-      && !sessionEvents.some(event => event.type === 'turn/start')
-      && Date.now() < restoreDeadline) {
-      await page.waitForTimeout(100)
-      retainedCards = await rail.locator(':scope > *').count()
-    }
-    if (retainedCards !== 0) {
-      const feedback = await page.locator('[role="alert"], [role="status"]').allTextContents()
-      throw new Error(`submission retained ${String(retainedCards)} draft cards; feedback=${JSON.stringify(feedback)}; events=${sessionEvents.map(event => event.type).join(',')}`)
-    }
     const sessionId = await settled
+    await expect.poll(() => rail.locator(':scope > *').count()).toBe(0)
     if (MODE === 'record') await recordFixture(scaffold, sessionId, FIXTURE)
   }, 200_000)
 

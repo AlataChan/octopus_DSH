@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-本包让浏览器功能为一个 Session 存储 `Blob`、精确字节或 `ReadableStream<Uint8Array>`，并取得供后续 prompt 使用的不透明凭证。普通服务页面发送 Blob 和 stream 请求体时，不会在页面线程聚合全部字节；Host 位于其他执行上下文中的页面会在 Cordis 启动前提供 Fetch 形式的载体。调用方可以观察已消费字节并取消活动操作。stream 请求体只能消费一次，跨 Worker 边界时会转移所有权。精确字节使用生成的 Remote。
+本包为 Session 存储浏览器文件，并返回供后续 prompt 使用的暂存凭证。它在消费请求体之前选择浏览器 HTTP、明确提供的上传 Fetch 钩子或进程所属的 Remote。调用方可以观察已消费字节并取消活动上传。
 
 ## 目录
 
@@ -32,7 +32,7 @@ kind: "package-reference"
   name: '@deepseek-ai/dsh-client-file-upload'
 ```
 
-本包没有 Cordis 配置字段。`Blob` 在专用 Worker 内通过 XMLHttpRequest 发送，因此服务可以报告浏览器上传进度，并在浏览器提供总量时一并报告。`ReadableStream` 会转移给该 Worker，再增量传入 Fetch；进度只报告已消费字节，不包含总量。`AbortSignal` 会终止专用 Worker，或传递给页面自己提供的载体。精确字节使用生成的 Remote。
+本包没有 Cordis 配置字段。`Blob` 在专用 Worker 内通过 XMLHttpRequest 发送，因此服务可以报告浏览器上传进度，并在浏览器提供总量时一并报告。`ReadableStream` 会转移给该 Worker，再增量传入 Fetch；进度只报告已消费字节，不包含总量。`AbortSignal` 会终止专用 Worker，或传递给页面自己提供的载体。精确字节使用生成的 Remote。页面载体拥有 Host 时（例如桌面 IPC），Blob 与流会在支持取消及字节进度的情况下收集，再通过同一 Remote 发送，并受进程载体消息预算约束。明确提供的文件上传 Fetch 钩子优先。生成的 `remote.fileUploads` 命名空间是必需的 Client 依赖。
 
 -----
 

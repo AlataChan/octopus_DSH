@@ -1,7 +1,7 @@
 import { Context } from '@deepseek-ai/cordis'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { apply } from '../src/client/index.ts'
+import { apply, inject } from '../src/client/index.ts'
 import { fileUploadWorker, FileUploadRuntime } from '../src/client/runtime.ts'
 import type { FileUploadBody } from '../src/client/contract.ts'
 import type { ClientFileUploadHooks } from '../src/types.ts'
@@ -390,6 +390,7 @@ describe('Session-addressed file upload', () => {
   }
 
   it('assembles the scoped streaming request and parses progress and receipt fields', async () => {
+    vi.stubGlobal('__DSH_TRANSPORT__', { ownsHost: true })
     const progress = vi.fn()
     const fetch = vi.fn((_url: string | URL, init: RequestInit) => {
       expect(init.body).toBeInstanceOf(Blob)
@@ -424,6 +425,41 @@ describe('Session-addressed file upload', () => {
       }),
     )
     await fiber.dispose()
+  })
+
+  it('declares the generated upload namespace required by real guarded Client contexts', () => {
+    expect(inject).toContain('remote.fileUploads')
+  })
+
+  it('uploads desktop Blobs and streams through Remote without a browser Worker', async () => {
+    vi.stubGlobal('__DSH_TRANSPORT__', { ownsHost: true })
+    vi.stubGlobal('Worker', undefined)
+    const { fiber, service, remote } = await scopedService()
+    try {
+      const progress = vi.fn()
+      await expect(service.upload(SESSION_ID, new Blob(['PDF']), '文档.pdf', undefined, progress)).resolves.toMatchObject({ ok: true })
+      expect(remote).toHaveBeenLastCalledWith(SESSION_ID, { data: 'UERG', name: '文档.pdf' }, undefined)
+      expect(progress).toHaveBeenLastCalledWith({ loaded: 3, total: 3 })
+      const stream = new ReadableStream<Uint8Array>({ start(c) { c.enqueue(Uint8Array.of(1, 2)); c.enqueue(Uint8Array.of(3)); c.close() } })
+      await expect(service.upload(SESSION_ID, stream)).resolves.toMatchObject({ ok: true })
+      expect(remote).toHaveBeenLastCalledWith(SESSION_ID, { data: 'AQID' }, undefined)
+    } finally { await fiber.dispose() }
+  })
+
+  it('cancels a desktop body before it can dispatch Remote', async () => {
+    vi.stubGlobal('__DSH_TRANSPORT__', { ownsHost: true })
+    const { fiber, service, remote } = await scopedService()
+    const controller = new AbortController()
+    const cancel = vi.fn()
+    const stream = new ReadableStream<Uint8Array>({ cancel })
+    try {
+      const pending = service.upload(SESSION_ID, stream, undefined, controller.signal)
+      const rejected = expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+      controller.abort()
+      await rejected
+      expect(cancel).toHaveBeenCalledOnce()
+      expect(remote).not.toHaveBeenCalled()
+    } finally { await fiber.dispose() }
   })
 
   it('uses the direct Remote fallback for exact bytes', async () => {
