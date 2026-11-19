@@ -3689,6 +3689,8 @@ export type ClaudeCodePermissionMode = typeof CLAUDE_CODE_PERMISSION_MODES[numbe
 ```ts config-catalog
 /** Deployment-owned model, permission, environment, and process-release settings. */
 export interface Config {
+  /** Optional local Codex CLI selected by the profile owner. */
+  executable?: string
   /** Provider name on `ctx.subagents` (default `codex`). */
   providerName?: string
   /** Native Codex model fixed for this instance; omitted to inherit Codex settings. */
@@ -3706,6 +3708,7 @@ export interface Config {
 
 /** Profile-selectable non-interactive Codex permission mode. */
 export type CodexPermissionMode =
+  | 'read-only'
   | 'never'
   | 'approve-for-me'
   | 'dangerously-bypass-approvals-and-sandbox'
