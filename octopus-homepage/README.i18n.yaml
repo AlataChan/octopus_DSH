@@ -1,0 +1,7 @@
+# Bilingual-pair consistency record for README.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write octopus-homepage/README.md
+/octopus-homepage:
+  en: 8a8fe78b39110241
+  zh: 860a27089c8a3e11

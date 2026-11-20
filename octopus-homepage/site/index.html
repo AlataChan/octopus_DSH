@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Octopus 小绿鲸，把文件、数据和 AI 团队放进一个桌面工作台。">
+  <meta name="theme-color" content="#f8f9f3">
+  <title>Octopus 小绿鲸 · AI 桌面工作台</title>
+  <link rel="icon" href="./assets/whale.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="./style.css">
+  <script src="./downloads.js" defer></script>
+  <script src="./site.js" defer></script>
+</head>
+<body id="top">
+  <a class="skip" href="#main">跳到正文</a>
+  <header class="page-header">
+    <div class="wrap bar">
+      <a class="brand" href="#top"><img src="./assets/whale.svg" alt="" width="31" height="23"><span>Octopus <small>小绿鲸</small></span></a>
+      <nav aria-label="主导航">
+        <a href="#scenarios">使用场景</a>
+        <a href="#start">上手指南</a>
+        <a class="nav-download" href="#downloads">下载</a>
+      </nav>
+    </div>
+  </header>
+  <main id="main">
+    <section class="hero wrap" aria-labelledby="hero-title">
+      <div class="hero-copy">
+        <p class="eyebrow">AI 桌面工作台</p>
+        <h1 id="hero-title">把文件、数据和<br class="wide-break"> <em>AI 团队</em>放在一起</h1>
+        <p class="intro">选一个工作文件夹，就能问资料、分析表格，也可以把复杂任务交给几个 AI 角色一起做。</p>
+        <div class="actions">
+          <a class="button primary" href="#macos" data-installer="macos">下载 macOS <span aria-hidden="true">↓</span></a>
+          <a class="button secondary" href="#windows" data-installer="windows">下载 Windows <span aria-hidden="true">↓</span></a>
+        </div>
+        <p class="platform-note">桌面测试版 · Apple Silicon / Windows x64</p>
+      </div>
+      <figure class="demo">
+        <div class="demo-heading"><span><i aria-hidden="true"></i> Team Room</span><span>任务分工实录</span></div>
+        <video controls preload="none" playsinline poster="./assets/team-room.png" aria-label="Team Room 实录，展示主控和队友的任务运行状态">
+          <source src="./assets/team-room.mp4" type="video/mp4">
+          <a href="./assets/team-room.mp4">打开 Team Room 演示视频</a>
+        </video>
+        <figcaption>看队友从接手任务到回报进度。</figcaption>
+      </figure>
+    </section>
+    <section id="scenarios" class="gallery section">
+      <div class="wrap">
+        <div class="section-heading"><h2>一件工作，从哪里开始？</h2><p>用真实任务看看小绿鲸怎么帮忙。</p></div>
+        <div class="work-grid">
+          <article class="work-card">
+            <button type="button" data-scene="knowledge" aria-haspopup="dialog" aria-label="查看问知识演示">
+              <span class="work-visual knowledge"><img src="./assets/knowledge.webp" alt="知识库文档列表和处理状态" loading="lazy" width="1350" height="759"></span>
+              <span class="card-copy"><strong>问知识</strong><span>从手边的资料里找答案和出处。</span></span><span class="arrow" aria-hidden="true">↗</span>
+            </button>
+          </article>
+          <article class="work-card">
+            <button type="button" data-scene="data" aria-haspopup="dialog" aria-label="查看问数据演示">
+              <span class="work-visual data"><img src="./assets/data.webp" alt="数据工作区中的表格分析结果" loading="lazy" width="1350" height="759"></span>
+              <span class="card-copy"><strong>问数据</strong><span>上传 Excel 或 CSV，把表格变成分析。</span></span><span class="arrow" aria-hidden="true">↗</span>
+            </button>
+          </article>
+          <article class="work-card">
+            <button type="button" data-scene="team" aria-haspopup="dialog" aria-label="查看团队协作演示">
+              <span class="work-visual team"><img src="./assets/team-output.webp" alt="文案团队交付的活动传播文案" loading="lazy" width="804" height="1000"></span>
+              <span class="card-copy"><strong>团队协作</strong><span>分头查资料、写提纲和审稿，再汇总成果。</span></span><span class="arrow" aria-hidden="true">↗</span>
+            </button>
+          </article>
+        </div>
+      </div>
+    </section>
+    <section id="start" class="section wrap">
+      <div class="section-heading"><h2>把第一件事交给小绿鲸</h2></div>
+      <ol class="steps">
+        <li><strong>安装桌面版</strong><p>选择适合你电脑的安装包，按安装说明启动应用。</p></li>
+        <li><strong>配置模型</strong><p>在设置中填写所用模型服务的 API Key。</p></li>
+        <li><strong>选择工作文件夹</strong><p>打开你要工作的文件夹，从一个问题开始。</p></li>
+      </ol>
+    </section>
+    <section id="downloads" class="downloads section">
+      <div class="wrap">
+        <div class="section-heading"><h2>下载 Octopus</h2><p>桌面测试版。两个平台各自标注构建版本。</p></div>
+        <div class="installer-grid">
+          <article id="macos" class="installer">
+            <h3>macOS <small>Apple Silicon</small></h3>
+            <p data-release="macos"></p>
+            <a class="button primary" data-installer="macos" href="#macos">下载 DMG <span aria-hidden="true">↓</span></a>
+            <p class="download-status" data-status="macos" hidden></p>
+            <details><summary>安装与校验</summary><p>打开 DMG，按镜像内的说明安装。当前构建使用内部签名。</p><code data-checksum="macos"></code></details>
+          </article>
+          <article id="windows" class="installer">
+            <h3>Windows <small>x64</small></h3>
+            <p data-release="windows"></p>
+            <a class="button primary" data-installer="windows" href="#windows">下载 EXE <span aria-hidden="true">↓</span></a>
+            <p class="download-status" data-status="windows" hidden></p>
+            <details><summary>安装与校验</summary><p>打开 EXE，按安装程序的提示完成安装。</p><code data-checksum="windows"></code></details>
+          </article>
+        </div>
+      </div>
+    </section>
+  </main>
+  <footer class="wrap bar">
+    <a class="brand" href="#top"><img src="./assets/whale.svg" alt="" width="27" height="20">Octopus 小绿鲸</a>
+    <span>基于 DeepSeek Harness 构建</span>
+    <a href="https://github.com/AlataChan/deepseek-harness">GitHub ↗</a>
+  </footer>
+  <dialog id="scene" aria-labelledby="scene-title">
+    <div class="dialog-header"><h2 id="scene-title"></h2><form method="dialog"><button class="close" aria-label="关闭演示">×</button></form></div>
+    <p id="scene-description"></p>
+    <img id="scene-image" alt="">
+  </dialog>
+</body>
+</html>
