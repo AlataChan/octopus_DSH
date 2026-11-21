@@ -27,7 +27,7 @@ nav { display: flex; align-items: center; gap: 29px; font-size: 14px; }
 .skip { position: absolute; left: 10px; top: -60px; z-index: 2; background: white; padding: 10px; }
 .skip:focus { top: 10px; }
 :focus-visible { outline: 3px solid #277e69; outline-offset: 4px; }
-.hero { display: grid; grid-template-columns: 1.15fr .85fr; align-items: center; gap: clamp(34px, 7vw, 104px); padding-block: 49px 57px; }
+.hero { display: grid; grid-template-columns: minmax(0, .95fr) minmax(0, 1.05fr); align-items: center; gap: clamp(32px, 5vw, 72px); padding-block: 68px 76px; }
 .eyebrow { margin-bottom: 19px; font-size: 14px; font-weight: 750; color: var(--green); letter-spacing: .13em; }
 h1 { font-size: clamp(37px, 4.42vw, 66px); font-weight: 800; letter-spacing: -.065em; line-height: 1.19; }
 h1 em { color: var(--green); font-style: normal; white-space: nowrap; }
@@ -43,7 +43,7 @@ h1 em { color: var(--green); font-style: normal; white-space: nowrap; }
 .demo-heading { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 4px 5px 10px; font-size: 12px; color: var(--muted); }
 .demo-heading span:first-child { color: var(--ink); font-weight: 750; }
 .demo-heading i { display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; background: #38866c; }
-.demo video { display: block; width: 100%; aspect-ratio: 528 / 640; border-radius: 11px; background: #f1efe3; }
+.demo video { display: block; width: 100%; aspect-ratio: 16 / 9; border-radius: 11px; background: #f1efe3; }
 .demo figcaption { padding: 9px 5px 1px; color: var(--muted); font-size: 12px; }
 .section { padding-block: 58px; }
 .gallery, .downloads { border-block: 1px solid var(--line); background: var(--tint); }
@@ -98,7 +98,7 @@ dialog img { margin-inline: auto; max-height: 70vh; object-fit: contain; border:
   .hero { grid-template-columns: 1fr; gap: 29px; padding-block: 38px 37px; }
   h1 { max-width: 440px; }
   .wide-break { display: initial; }
-  .demo { width: min(100%, 400px); }
+  .demo { width: 100%; }
   .section { padding-block: 37px; }
   .work-grid, .steps, .installer-grid { grid-template-columns: 1fr; }
   .work-visual { height: 170px; }
