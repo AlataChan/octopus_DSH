@@ -4,6 +4,13 @@
 
 pre-commit:
   jobs:
+    - name: publish new Octopus installers
+      files: git ls-files octopus-homepage/site/downloads.js
+      run: |
+        if test -f {files} && publisher_python=$(git config --get octopus.cosPython) && [ -n "$publisher_python" ]; then
+          "$publisher_python" octopus-homepage/publish_installers.py
+        fi
+
     - name: translation pairing (staged records)
       glob: '*.i18n.yaml'
       exclude:

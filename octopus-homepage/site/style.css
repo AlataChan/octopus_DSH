@@ -20,6 +20,7 @@ h1, h2, h3, p, figure { margin: 0; }
 .bar { display: flex; min-height: 76px; align-items: center; justify-content: space-between; gap: 22px; }
 .page-header { border-bottom: 1px solid var(--line); }
 .brand { display: inline-flex; align-items: center; gap: 10px; font-weight: 750; letter-spacing: -.02em; white-space: nowrap; }
+.brand img { flex: none; mix-blend-mode: multiply; }
 .brand small { margin-inline-start: 5px; color: var(--muted); font-weight: 550; font-size: .75em; }
 nav { display: flex; align-items: center; gap: 29px; font-size: 14px; }
 .nav-download { border: 1px solid #bdccc0; border-radius: 8px; padding: 8px 19px; color: var(--green); font-weight: 700; }
