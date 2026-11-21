@@ -51,7 +51,9 @@ h1 em { color: var(--green); font-style: normal; white-space: nowrap; }
 h2 { font-size: clamp(26px, 3vw, 39px); line-height: 1.3; letter-spacing: -.05em; }
 .section-heading p { margin-top: 8px; color: var(--muted); font-size: 15px; line-height: 1.55; }
 .work-grid, .steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
-.work-card button { position: relative; display: block; width: 100%; height: 100%; padding: 0; text-align: left; border: 1px solid #d1dfd3; border-radius: 15px; background: #fffefa; cursor: pointer; overflow: hidden; }
+.work-card button { position: relative; display: block; width: 100%; padding: 0; text-align: left; border: 1px solid #d1dfd3; border-radius: 15px; background: #fffefa; cursor: pointer; overflow: hidden; }
+.work-link { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding-inline: 16px; color: var(--green); font-size: 14px; font-weight: 700; }
+.work-link:hover { text-decoration: underline; text-underline-offset: 3px; }
 .work-card button:hover { border-color: #55917a; box-shadow: 0 5px 17px #173a2210; }
 .work-visual { display: grid; background: #e8eee5; height: clamp(120px, 15vw, 192px); padding: 13px 15px 0; overflow: hidden; place-items: start center; }
 .work-visual img { width: 100%; height: auto; border: 1px solid #d1ddd5; border-radius: 8px; }
