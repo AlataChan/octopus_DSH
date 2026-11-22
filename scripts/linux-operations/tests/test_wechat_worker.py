@@ -1527,6 +1527,9 @@ class GroupAndAdhocMomentsTests(unittest.TestCase):
                             inner_self._right_click_target = bubble_text
                             break
 
+            def _visual_pixels(inner_self, window):
+                return inner_self.capture(window)[0]
+
             def capture(inner_self, window):
                 img = test_self.np.full((900, 1280, 3), 248, dtype=test_self.np.uint8)
                 rows = []
