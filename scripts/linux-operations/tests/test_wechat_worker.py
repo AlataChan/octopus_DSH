@@ -1998,6 +1998,14 @@ class GroupAndAdhocMomentsTests(unittest.TestCase):
         (runs_dir / f'{daily_rid}.json').write_text(json.dumps({
             'version': CN_REPORT_TEAM_VERSION, 'run_id': daily_rid, 'hash': 'h' * 64,
             'report_as_of': '2026-11-21T15:00:00+08:00',
+            'input': {'evidence': {
+                'E1': {'symbol': '510500', 'instrument_scope': 'etf', 'category': 'daily_price',
+                       'source_date': '2026-11-21', 'close': 6.2, 'adjustment': 'raw',
+                       'price_basis': 'as_published_session_close'},
+                'E2': {'symbol': '510500', 'instrument_scope': 'etf', 'category': 'latest_price',
+                       'source_date': '2026-11-21', 'reference_date': '2026-11-20',
+                       'reference_close': 6.4, 'adjustment': 'raw'},
+            }},
             'claim_states': {'O': 'disputed', 'I1': 'accepted', 'I2': 'withdrawn'},
             'analysis': {
                 'outlook': {'direction': '弱势震荡，反弹持续性待确认', 'confidence': '低', 'horizon_sessions': 3, 'fact_refs': ['E1.close']},
