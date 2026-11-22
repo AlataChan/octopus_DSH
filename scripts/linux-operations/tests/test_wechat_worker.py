@@ -4219,9 +4219,15 @@ class InboundScanSchedulerTests(unittest.TestCase):
             resolved['targets'][2].binding_sha256,
             worker.compute_group_binding_sha256(self.root, self.config, self.sidecar['contacts'][2]),
         )
+        anchors = {}
+        for field in ('at_me_badge_anchor', 'at_me_session_group_anchor', 'session_park_anchor', 'session_park_heading_anchor'):
+            pin = self.root / 'config' / (field + '.png')
+            pin.write_bytes(self._png_bytes())
+            pin.chmod(0o640)
+            anchors[field] = str(pin)
         scoped = worker.InboundScanConfig(
             enabled=True, contact_ids=('group-1',), self_mention_names=('Bot',),
-            group_inbound={'group-1': {'sender_verify_mode': 'pinned_only'}},
+            group_inbound={'group-1': {**anchors, 'sender_verify_mode': 'pinned_only'}},
         )
         group = worker.resolve_inbound_scan_targets(
             self.root, self.config, trusted_uid=os.getuid(), config_path=self.config_path,
@@ -4229,6 +4235,13 @@ class InboundScanSchedulerTests(unittest.TestCase):
         )['targets']
         self.assertEqual([target.target_key for target in group], ['group:group-1'])
         self.assertEqual(group[0].effective_config['sender_verify_mode'], 'pinned_only')
+        self.assertEqual(group[0].effective_config['session_park_anchor'], anchors['session_park_anchor'])
+        Path(anchors['session_park_anchor']).chmod(0o666)
+        with self.assertRaisesRegex(ValueError, 'untrusted_group_inbound_anchor'):
+            worker.resolve_inbound_scan_targets(
+                self.root, self.config, trusted_uid=os.getuid(), config_path=self.config_path,
+                contacts_path=self.contacts_path, manual_reply_path=self.manual_reply_path, scan_config=scoped,
+            )
 
         # Disabled worker config or disabled/missing manual_reply view keeps scan disabled cleanly.
         self.assertEqual(

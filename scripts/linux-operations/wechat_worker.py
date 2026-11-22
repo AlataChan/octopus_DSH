@@ -1378,13 +1378,22 @@ class RegisteredOwnPostTarget:
 
 
 
+GROUP_SCAN_ANCHOR_FIELDS = (
+    'at_me_badge_anchor', 'at_me_session_group_anchor', 'visual_mention_anchor',
+    'session_park_anchor', 'session_park_heading_anchor',
+)
+
+
 def _validate_group_scan_options(group_id, group):
-    anchor_fields = {'at_me_badge_anchor', 'at_me_session_group_anchor', 'visual_mention_anchor'}
+    anchor_fields = set(GROUP_SCAN_ANCHOR_FIELDS)
     if (not isinstance(group_id, str) or not CONTACT_ID_RE.fullmatch(group_id)
             or not isinstance(group, dict) or set(group) - (anchor_fields | {'registered_authors', 'sender_verify_mode'})):
         raise ValueError('invalid_group_inbound_config')
     if group.get('sender_verify_mode', 'auto') not in ('auto', 'pinned_only', 'card_copy'):
         raise ValueError('invalid_group_sender_verify_mode')
+    park_fields = {'session_park_anchor', 'session_park_heading_anchor'}
+    if park_fields & set(group) and not (park_fields | {'at_me_badge_anchor', 'at_me_session_group_anchor'}).issubset(group):
+        raise ValueError('incomplete_group_scan_parking_config')
     for name in anchor_fields & set(group):
         path = group[name]
         if not isinstance(path, str) or not path.startswith('/'):
@@ -1414,7 +1423,7 @@ def _verified_group_scan_options(root, group, *, trusted_uid):
         return resolved
 
     result = {}
-    for field in ('at_me_badge_anchor', 'at_me_session_group_anchor', 'visual_mention_anchor'):
+    for field in GROUP_SCAN_ANCHOR_FIELDS:
         if field in group:
             result[field] = trusted_anchor(group[field])
     if 'sender_verify_mode' in group:
@@ -1834,8 +1843,7 @@ def resolve_inbound_scan_targets(
                 if resolved_name_anchor is not None:
                     effective['group_name_anchor'] = resolved_name_anchor
                 # Routing and author pins come from the root-owned inbound policy.
-                for key in ('self_mention_names', 'registered_authors', 'at_me_badge_anchor',
-                            'at_me_session_group_anchor', 'visual_mention_anchor',
+                for key in (*GROUP_SCAN_ANCHOR_FIELDS, 'self_mention_names', 'registered_authors',
                             'sender_verify_mode', 'own_sender_refs', 'automated_sender_refs', 'at_all_tokens'):
                     effective.pop(key, None)
                 if cfg_model.self_mention_names:
