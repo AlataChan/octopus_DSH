@@ -353,7 +353,7 @@ function validateAutoReplyConversationRule(key, rule, defaults) {
     throw new Error(`Invalid autoReply conversation key: ${key}`)
   }
   const channel = key.split(':')[0]
-  fields(rule, ['mode'], ['allowPublishedReportFacts', 'allowedTopics', 'tone', 'cooldownSeconds', 'maxReplyChars'])
+  fields(rule, ['mode'], ['allowPublishedReportFacts', 'allowRegisteredSenderMentions', 'allowedTopics', 'tone', 'cooldownSeconds', 'maxReplyChars'])
   if (!AUTOREPLY_CONVERSATION_MODES.includes(rule.mode)) {
     throw new Error(`Invalid autoReply conversation mode: ${rule.mode}`)
   }
@@ -361,6 +361,10 @@ function validateAutoReplyConversationRule(key, rule, defaults) {
     throw new Error('Invalid autoReply allowPublishedReportFacts flag')
   }
   const allowPublishedReportFacts = rule.allowPublishedReportFacts === true
+  if (Object.hasOwn(rule, 'allowRegisteredSenderMentions')
+    && (channel !== 'group' || typeof rule.allowRegisteredSenderMentions !== 'boolean')) {
+    throw new Error('Invalid group allowRegisteredSenderMentions flag')
+  }
   let allowedTopics = Object.freeze([])
   if (Object.hasOwn(rule, 'allowedTopics')) {
     if (!Array.isArray(rule.allowedTopics) || rule.allowedTopics.length > 20) {
@@ -398,6 +402,7 @@ function validateAutoReplyConversationRule(key, rule, defaults) {
     channel,
     mode: rule.mode,
     allowPublishedReportFacts,
+    allowRegisteredSenderMentions: rule.allowRegisteredSenderMentions === true,
     allowedTopics,
     tone,
     cooldownSeconds,

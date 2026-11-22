@@ -24,6 +24,7 @@ export type WechatAutoReplyEligibilityDecision =
 export interface WechatAutoReplyConversationRule {
   readonly mode: WechatAutoReplyMode
   readonly allowPublishedReportFacts?: boolean | undefined
+  readonly allowRegisteredSenderMentions?: boolean | undefined
   readonly allowedTopics?: readonly string[] | undefined
   readonly tone?: string | null | undefined
   readonly cooldownSeconds?: number | null | undefined
@@ -78,7 +79,7 @@ export interface WechatAutoReplyAuthorProof {
 export interface WechatAutoReplyMentionSelfProof {
   readonly accountSha256: string
   readonly evidenceSha256: string
-  readonly verifiedBy: 'anchor' | 'native_copy' | 'mention_chip'
+  readonly verifiedBy: 'anchor' | 'native_copy' | 'mention_chip' | 'registered_sender'
 }
 
 export interface WechatAutoReplyQuoteSelfProof {

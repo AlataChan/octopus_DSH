@@ -339,7 +339,7 @@ function verifyRuntimeManualReplyViewGate(policy, expectedAccountSha, nowMs, sta
   return { ok: true, pauseMaxAge: view.max_age_seconds, reason: null }
 }
 
-function validateSignalProofForEvent(event, signal, expectedChannel) {
+function validateSignalProofForEvent(event, signal, expectedChannel, allowRegisteredSenderMentions) {
   if (!signal || typeof signal !== 'object' || Array.isArray(signal)) {
     return { ok: false, state: 'needs_review', reason: 'unverified_source_proof' }
   }
@@ -413,7 +413,15 @@ function validateSignalProofForEvent(event, signal, expectedChannel) {
     if (
       proof.accountSha256 !== event.accountSha256
       || proof.evidenceSha256 !== event.evidenceSha256
-      || !TRUSTED_MENTION_VERIFIERS.has(proof.verifiedBy)
+      || (event.sourceProof?.triggerVerifier === 'registered_sender' && proof.verifiedBy !== 'registered_sender')
+      || !(TRUSTED_MENTION_VERIFIERS.has(proof.verifiedBy) || (
+        proof.verifiedBy === 'registered_sender' && allowRegisteredSenderMentions
+        && authorProof.verifiedBy === 'native_copy'
+        && event.sourceProof?.author === 'native_copy'
+        && event.sourceProof?.trigger === 'mention_self'
+        && event.sourceProof?.triggerVerifier === 'registered_sender'
+        && event.sourceProof?.latest === true
+      ))
     ) {
       return { ok: false, state: 'needs_review', reason: 'group_unverified_mention_proof' }
     }
@@ -443,7 +451,7 @@ function validateSignalProofForEvent(event, signal, expectedChannel) {
   return { ok: false, state: 'needs_review', reason: 'group_unverified_trigger_proof' }
 }
 
-function evaluateBatchSignalProofs(events, signalMap, channel) {
+function evaluateBatchSignalProofs(events, signalMap, channel, allowRegisteredSenderMentions) {
   if (!signalMap || typeof signalMap !== 'object' || Array.isArray(signalMap)) {
     return {
       ok: false,
@@ -462,7 +470,7 @@ function evaluateBatchSignalProofs(events, signalMap, channel) {
         reason: channel === 'group' ? 'group_unverified_trigger_proof' : 'friend_unverified_source_proof',
       }
     }
-    const checked = validateSignalProofForEvent(ev, sig, channel)
+    const checked = validateSignalProofForEvent(ev, sig, channel, allowRegisteredSenderMentions)
     if (checked.ok) {
       if (channel === 'group') sawTargetedGroup = true
       continue
@@ -1840,7 +1848,7 @@ export class WechatAutoReplyStore {
       }
     }
 
-    const signalCheck = evaluateBatchSignalProofs(events, options.eventSignals ?? null, channel)
+    const signalCheck = evaluateBatchSignalProofs(events, options.eventSignals ?? null, channel, convRule.allowRegisteredSenderMentions)
     if (!signalCheck.ok) {
       return {
         ok: false,
@@ -2924,6 +2932,7 @@ function toStoreAutoReplyPolicy(runtimeCfg) {
         {
           mode: rule.mode,
           allowPublishedReportFacts: rule.allowPublishedReportFacts,
+          ...(rule.allowRegisteredSenderMentions ? { allowRegisteredSenderMentions: true } : {}),
           allowedTopics: [...rule.allowedTopics],
           ...(rule.tone === null ? {} : { tone: rule.tone }),
           ...(rule.cooldownSeconds === null ? {} : { cooldownSeconds: rule.cooldownSeconds }),

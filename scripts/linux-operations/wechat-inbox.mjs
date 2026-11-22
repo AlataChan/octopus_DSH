@@ -478,7 +478,7 @@ export function validateInboundWorkerEvent(
     if (trigger !== null && (raw.conversation_kind !== 'group' || !['mention_self', 'quote_self', 'at_all'].includes(trigger))) {
       throw new Error('Invalid desktop group trigger')
     }
-    if (trigger === 'mention_self' && !['anchor', 'mention_chip'].includes(proof.trigger_verifier)) {
+    if (trigger === 'mention_self' && !['anchor', 'mention_chip', 'registered_sender'].includes(proof.trigger_verifier)) {
       throw new Error('Group mention lacks UI corroboration')
     }
     if (trigger === 'quote_self' && (
@@ -487,6 +487,11 @@ export function validateInboundWorkerEvent(
       throw new Error('Group quote lacks stable provenance')
     }
     const mention = trigger === 'mention_self' ? /^@[^@\r\n\u2005]{1,128}\u2005/u.exec(raw.text) : null
+    if (proof.trigger_verifier === 'registered_sender' && (
+      !mention || proof.author !== 'native_copy' || !proof.latest || !raw.text.slice(mention[0].length).trim()
+    )) {
+      throw new Error('Invalid registered sender mention')
+    }
     const question = mention
       ? sanitizeUntrustedNoticeText(raw.text.slice(mention[0].length), { singleLine: true, maxBytes: 1024 })
       : null

@@ -388,6 +388,45 @@ function setupAutoReplyFixture(t, { manualReplyPaused = false, manualReplyLease 
   }
 }
 
+test('registered group mention reaches the model only when the group policy opts in', async t => {
+  for (const enabled of [false, true]) {
+    await t.test(String(enabled), async t => {
+      const f = setupAutoReplyFixture(t)
+      const evidence = f.writeEvidence('registered-group.png')
+      const event = {
+        schema_version: 1, event_id: 'evt-registered-group',
+        account_sha256: f.accountSha, trigger_type: 'group_message',
+        conversation_kind: 'group', conversation_ref: 'ops_group',
+        binding_sha256: f.proofOf('ops_group'), sender_name: 'Registered peer',
+        sender_ref: 'registered-peer', source_ref: 'grp_registered_message',
+        source_time: '13:15', observed_at: f.now(), text: '@Gamma\u2005你好',
+        evidence_path: evidence.relPath, evidence_sha256: evidence.sha256,
+        source_proof: {
+          author: 'native_copy', latest: true, trigger: 'mention_self', trigger_verifier: 'registered_sender',
+        },
+      }
+      const [sealed] = f.sealEvents([event]).sealed
+      const batch = f.projector.getProjectedNotice(sealed.noticeKey)
+      const store = new WechatAutoReplyStore(f.policy, {
+        enabled: true, policyVersion: 1,
+        conversations: { 'group:ops_group': { mode: 'unattended', allowRegisteredSenderMentions: enabled } },
+      }, { clock: f.now })
+      t.after(() => store.close())
+      let calls = 0
+      const result = await store.evaluateSealedBatch(batch.source_ref, {
+        adapter: {
+          async generate() {
+            calls += 1
+            return { providerRunId: 'registered_peer_run', rawOutput: { decision: 'answer', answer: '你好。' } }
+          },
+        },
+      })
+      assert.equal(calls, enabled ? 1 : 0)
+      assert.equal(result.state, enabled ? 'draft_ready' : 'needs_review')
+    })
+  }
+})
+
 test('the installed broker policy queues one automatic reply from explicit desktop source proof', async t => {
   const f = setupAutoReplyFixture(t)
   const policyPath = join(f.root, 'operations.json')

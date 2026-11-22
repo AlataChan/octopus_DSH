@@ -1386,14 +1386,19 @@ GROUP_SCAN_ANCHOR_FIELDS = (
 
 def _validate_group_scan_options(group_id, group):
     anchor_fields = set(GROUP_SCAN_ANCHOR_FIELDS)
+    option_fields = {'registered_authors', 'sender_verify_mode', 'allow_registered_sender_mentions'}
     if (not isinstance(group_id, str) or not CONTACT_ID_RE.fullmatch(group_id)
-            or not isinstance(group, dict) or set(group) - (anchor_fields | {'registered_authors', 'sender_verify_mode'})):
+            or not isinstance(group, dict) or set(group) - (anchor_fields | option_fields)):
         raise ValueError('invalid_group_inbound_config')
+    if type(group.get('allow_registered_sender_mentions', False)) is not bool:
+        raise ValueError('invalid_registered_sender_mentions_flag')
     if group.get('sender_verify_mode', 'auto') not in ('auto', 'pinned_only', 'card_copy'):
         raise ValueError('invalid_group_sender_verify_mode')
     park_fields = {'session_park_anchor', 'session_park_heading_anchor'}
     if park_fields & set(group) and not (park_fields | {'at_me_badge_anchor', 'at_me_session_group_anchor'}).issubset(group):
         raise ValueError('incomplete_group_scan_parking_config')
+    if group.get('allow_registered_sender_mentions') and not park_fields.issubset(group):
+        raise ValueError('registered_sender_mentions_require_parked_scan')
     for name in anchor_fields & set(group):
         path = group[name]
         if not isinstance(path, str) or not path.startswith('/'):
@@ -1428,6 +1433,8 @@ def _verified_group_scan_options(root, group, *, trusted_uid):
             result[field] = trusted_anchor(group[field])
     if 'sender_verify_mode' in group:
         result['sender_verify_mode'] = group['sender_verify_mode']
+    if 'allow_registered_sender_mentions' in group:
+        result['allow_registered_sender_mentions'] = group['allow_registered_sender_mentions']
     if 'registered_authors' in group:
         result['registered_authors'] = []
         for author in group['registered_authors']:
