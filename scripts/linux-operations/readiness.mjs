@@ -12,7 +12,7 @@ export async function apply(ctx, config) {
   const controller = new AbortController()
   ctx.effect(() => () => controller.abort(new Error('Readiness plugin disposed')))
   const deadline = Date.now() + config.timeoutMs
-  const names = ['host_status', 'service_status', 'service_logs', 'wechat_status', 'wechat_screenshot', 'prepare', 'execute', 'receipt']
+  const names = ['host_status', 'service_status', 'service_logs', 'wechat_status', 'wechat_inbox_read', 'wechat_screenshot', 'prepare', 'execute', 'receipt']
   while (!names.every(tool => ctx.tools.get(`mcp__server_ops__${tool}`))) {
     if (Date.now() >= deadline) throw new Error('Required operations MCP tools did not become ready')
     await delay(config.pollIntervalMs, undefined, { signal: controller.signal })

@@ -104,3 +104,49 @@ export {
 } from './ingress.ts'
 
 export { ImWriterLease } from './writer-lease.ts'
+
+export {
+  FeishuOutboundClient,
+  FeishuAmbiguousTimeoutError,
+  FeishuOutboundError,
+  type FeishuOutboundConfig,
+  type FeishuSendTextRequest,
+  type FeishuSendTextResult,
+  type HttpFetchFn,
+} from './feishu-outbound.ts'
+
+export {
+  OWNER_NOTICE_DOMAIN_NAME,
+  OWNER_NOTICE_SCHEMA_VERSION,
+  OWNER_NOTICE_MAX_LENGTH,
+  MAX_HANDOFF_ENVELOPE_BYTES,
+  OWNER_NOTICE_CAPABILITY_VERSION,
+  ownerNoticesCapability,
+  ownerNoticeKindSchema,
+  ownerNoticeStatusSchema,
+  ownerNoticeRecordSchema,
+  conversationThreadSchema,
+  handoffNoticeEnvelopeSchema,
+  ownerNoticePluginConfigSchema,
+  ownerNoticeDomainSpec,
+  InvalidOwnerRouteError,
+  assertTrustedHandoffDirectory,
+  formatOwnerNoticeId,
+  sanitizeNoticeDisplayText,
+  resolveAuthenticatedOwnerRoute,
+  OwnerNoticeStorage,
+  OwnerNoticeDispatcher,
+  OwnerNoticeHandoffService,
+  type OwnerNoticeKind,
+  type OwnerNoticeStatus,
+  type OwnerNoticeRecord,
+  type ConversationThreadRecord,
+  type HandoffNoticeEnvelope,
+  type OwnerNoticePluginRawConfig,
+  type OwnerNoticePluginConfig,
+  type FeishuNoticeTextSender,
+  type ExpectedOwnerBinding,
+  type EnqueueOwnerNoticeInput,
+  type OwnerNoticeHandoffServiceOptions,
+  type OwnerNoticePollSummary,
+} from './owner-notice.ts'

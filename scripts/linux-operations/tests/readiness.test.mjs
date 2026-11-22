@@ -11,7 +11,7 @@ test('runtime readiness waits for every required tool, then publishes its servic
     provide: (name, value) => { assert.equal(name, 'octopusOpsReady'); assert(value.ready); ready = true } }
   const pending = apply(ctx, { timeoutMs: 1000, pollIntervalMs: 1 })
   assert.equal(ready, false)
-  for (const name of ['host_status', 'service_status', 'service_logs', 'wechat_status', 'wechat_screenshot', 'prepare', 'execute']) seen.add(`mcp__server_ops__${name}`)
+  for (const name of ['host_status', 'service_status', 'service_logs', 'wechat_status', 'wechat_inbox_read', 'wechat_screenshot', 'prepare', 'execute']) seen.add(`mcp__server_ops__${name}`)
   await new Promise(resolve => setTimeout(resolve, 3))
   assert.equal(ready, false)
   seen.add('mcp__server_ops__receipt')

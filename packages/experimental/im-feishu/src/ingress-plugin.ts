@@ -17,6 +17,20 @@ import { FeishuTransport, feishuTransportConfigSchema, type FeishuTransportDepen
 import { FeishuReplySender, DingTalkReplySender } from './reply-senders.ts'
 import type { IngressDurableAcceptor, TargetTenantId } from './types.ts'
 import { InteractionIngress, interactionIngressConfigSchema, publishedInteractionDomain } from './interaction-ingress.ts'
+import {
+  OWNER_NOTICE_CAPABILITY_VERSION,
+  OwnerNoticeDispatcher,
+  OwnerNoticeHandoffService,
+  OwnerNoticeStorage,
+  assertTrustedHandoffDirectory,
+  ownerNoticeDomainSpec,
+  ownerNoticePluginConfigSchema,
+  ownerNoticesCapability,
+  type ExpectedOwnerBinding,
+  type FeishuNoticeTextSender,
+} from './owner-notice.ts'
+
+export { OWNER_NOTICE_CAPABILITY_VERSION, ownerNoticesCapability }
 
 declare module '@deepseek-ai/cordis' {
   interface Context { imIngress: IngressService }
@@ -53,6 +67,7 @@ export const ingressPluginConfigSchema = z.object({
   tenants: z.record(z.string().min(1), tenantConnectionConfigSchema), channel: imChannelConfigSchema.optional(),
   operatorBindings: z.array(operatorBindingSchema).optional(),
   interactions: interactionIngressConfigSchema.optional(),
+  ownerNotices: ownerNoticePluginConfigSchema.optional(),
   maxStoredDeliveries: z.number().int().positive().default(10000),
   maxPendingAdmissions: z.number().int().positive().default(128),
   maxPromptBytes: z.number().int().positive().default(65536), maxReplyBytes: z.number().int().positive().default(65536),
@@ -75,6 +90,7 @@ export type TenantIpcClientFactory = (targetTenantId: string, config: TenantConn
 /** Direct owner tests may inject transport dependencies; production never falls back to logging replies. */
 export interface IngressPluginDependencies {
   readonly replySender?: ImReplySender | undefined
+  readonly ownerNoticeSender?: FeishuNoticeTextSender | undefined
   readonly clientFactory?: TenantIpcClientFactory | undefined
   readonly feishu?: FeishuTransportDependencies | undefined
   readonly dingtalk?: DingTalkTransportDependencies | undefined
@@ -92,6 +108,9 @@ export async function apply(ctx: Context, rawConfig: IngressPluginRawConfig,
   const deps: IngressPluginDependencies = depsOrSender && 'sendReply' in depsOrSender
     ? { replySender: depsOrSender } : (depsOrSender ?? {})
   if (config.interactions && config.channel?.kind !== 'feishu') throw new Error('Interactive cards require the Feishu channel')
+  if (config.ownerNotices?.enabled && config.channel?.kind !== 'feishu' && !deps.ownerNoticeSender) {
+    throw new Error('Owner notifications require an active Feishu channel')
+  }
   if (!config.channel && !deps.replySender) throw new Error('Ingress requires an explicit channel or owner-test reply sender')
   if (config.channel && config.dispatchIntervalMs === 0) throw new Error('Production channel requires a positive dispatch interval')
   const appExit = ctx.get('appExit')
@@ -120,11 +139,16 @@ export async function apply(ctx: Context, rawConfig: IngressPluginRawConfig,
   let feishuChannel: FeishuTransport | undefined
   let sqlite: SqliteStorageBackend | undefined
   let unregisterBackend: (() => void) | undefined
+  let noticeSqlite: SqliteStorageBackend | undefined
+  let unregisterNoticeBackend: (() => void) | undefined
+  let ownerNoticesService: OwnerNoticeHandoffService | undefined
+  const isShuttingDown = (): boolean => closed || abort.signal.aborted
   const clients = new Set<TenantIpcClient>()
   const readyClients = new Map<string, TenantIpcClient>()
   const connecting = new Map<string, Promise<TenantIpcClient>>()
   const abort = new AbortController()
   let pump: Promise<void> | undefined
+  let noticePump: Promise<void> | undefined
   let cancelReady: (() => void) | undefined
   let closing: Promise<void> | undefined
   let closed = false
@@ -143,6 +167,7 @@ export async function apply(ctx: Context, rawConfig: IngressPluginRawConfig,
         if (interactions) work.push(interactions.close())
         if (ingress) work.push(ingress.close())
         if (pump) work.push(pump)
+        if (noticePump) work.push(noticePump)
         const results = await Promise.allSettled(work)
         const clientResults = await Promise.allSettled(Array.from(clients, client => client.close()))
         const errors: unknown[] = [...registrationErrors]
@@ -157,6 +182,8 @@ export async function apply(ctx: Context, rawConfig: IngressPluginRawConfig,
       } finally { clearTimeout(timer) }
       await sqlite?.close()
       unregisterBackend?.()
+      await noticeSqlite?.close()
+      unregisterNoticeBackend?.()
       await lease.release()
     })
     return closing
@@ -247,10 +274,57 @@ export async function apply(ctx: Context, rawConfig: IngressPluginRawConfig,
       interactions = new InteractionIngress(await facility.open(publishedInteractionDomain), config.interactions,
         storage, ingress, tenant => provider.getClient(tenant), (chatId, card) => publisher.sendInteractiveCard(chatId, card))
     }
+    if (config.ownerNotices?.enabled) {
+      const ownerSender = feishuChannel ?? deps.ownerNoticeSender
+      if (!ownerSender) throw new Error('Owner notifications require an active Feishu channel')
+      const noticeCfg = config.ownerNotices
+      if (!noticeCfg.handoffDirectory || !noticeCfg.bindingKey || !noticeCfg.operatorId || !noticeCfg.targetTenantId) {
+        throw new Error('Owner notification configuration is incomplete')
+      }
+      assertTrustedHandoffDirectory(noticeCfg.handoffDirectory, noticeCfg.expectedProducerUid)
+      noticeSqlite = new SqliteStorageBackend({ path: join(config.stateDirectory, 'owner-notices.sqlite'), journalMode: 'wal' })
+      const noticeBackendKey = `sqlite:im-owner-notices:${config.ingressId}`
+      unregisterNoticeBackend = ctx.storage.backend.register(noticeBackendKey, noticeSqlite)
+      const noticeFacility = new DomainFacility(ctx, { backend: noticeBackendKey, routes: {} })
+      const noticeStorage = new OwnerNoticeStorage(await noticeFacility.open(ownerNoticeDomainSpec))
+      await noticeStorage.reconcileInFlightNotices()
+      const expectedBinding: ExpectedOwnerBinding = {
+        bindingKey: noticeCfg.bindingKey,
+        operatorId: noticeCfg.operatorId,
+        targetTenantId: noticeCfg.targetTenantId,
+        appId: noticeCfg.feishuAppId ?? (config.channel?.kind === 'feishu' ? config.channel.appId : undefined),
+        chatId: noticeCfg.feishuChatId,
+      }
+      const noticeDispatcher = new OwnerNoticeDispatcher(
+        noticeStorage,
+        ownerSender,
+        key => storage.getBinding(key),
+        expectedBinding,
+      )
+      ownerNoticesService = new OwnerNoticeHandoffService({
+        handoffDirectory: noticeCfg.handoffDirectory,
+        expectedProducerUid: noticeCfg.expectedProducerUid,
+        retentionDays: noticeCfg.retentionDays,
+        maxNoticeBytes: noticeCfg.maxNoticeBytes,
+        maxPendingNotices: noticeCfg.maxPendingNotices,
+        maxIngestPerCycle: noticeCfg.maxIngestPerCycle,
+        maxSendsPerCycle: noticeCfg.maxSendsPerCycle,
+        shouldStop: isShuttingDown,
+        expectedBinding,
+        storage: noticeStorage,
+        dispatcher: noticeDispatcher,
+        resolveBinding: key => storage.getBinding(key),
+        onWarning: (message, error) => {
+          if (!isShuttingDown()) ctx.logger.warn(message, error)
+        },
+      })
+    }
     ctx.provide('imIngress', ingress)
     await transport?.start()
     const service = ingress
     if (config.dispatchIntervalMs > 0 && appReady && appExit) {
+      const noticePoller = ownerNoticesService
+      const noticeIntervalMs = config.ownerNotices?.pollIntervalMs ?? 5000
       cancelReady = appReady.onReady(() => {
         if (closed || pump) return
         pump = (async () => {
@@ -266,6 +340,20 @@ export async function apply(ctx: Context, rawConfig: IngressPluginRawConfig,
           ctx.logger.error('IM ingress dispatch failed', error)
           appExit(1)
         })
+        if (noticePoller && !noticePump) {
+          noticePump = (async () => {
+            while (!abort.signal.aborted) {
+              try {
+                await noticePoller.pollOnce()
+              } catch (error) {
+                if (!isShuttingDown()) ctx.logger.warn('Owner notice handoff poll failed', error)
+              }
+              if (isShuttingDown()) break
+              try { await delay(noticeIntervalMs, undefined, { signal: abort.signal }) }
+              catch (error) { if (!(error instanceof Error && error.name === 'AbortError')) throw error }
+            }
+          })()
+        }
       })
     }
   } catch (error) {
