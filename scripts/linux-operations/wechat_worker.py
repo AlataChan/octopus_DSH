@@ -2144,6 +2144,19 @@ class InboundScanScheduler:
                 if not fresh_targets:
                     return {'state': 'idle', 'reason': 'no_supported_targets'}
 
+                group_mention_ready = getattr(adapter, 'group_mention_ready', None)
+                if len(fresh_targets) == 1 and fresh_targets[0].kind == 'group' and callable(group_mention_ready):
+                    try:
+                        ready = group_mention_ready(fresh_targets[0], root=root)
+                        if type(ready) is not bool:
+                            raise ValueError('invalid_group_mention_hint')
+                    except Exception as exc:
+                        self.last_attempt_mono = float(monotonic_clock())
+                        return {'state': 'refused', 'reason': _safe_error_code(exc)}
+                    if not ready:
+                        self.last_attempt_mono = float(monotonic_clock())
+                        return {'state': 'idle_hint_clear', 'reason': 'waiting_for_group_mention'}
+
                 try:
                     actual_account = adapter.verify_account_identity(fresh_cfg)
                 except Exception as exc:
@@ -2251,6 +2264,7 @@ class InboundScanScheduler:
                         'elapsed_seconds': elapsed_seconds,
                         'emitted_event_ids': persisted['emitted_event_ids'] if persisted else (),
                         'reason': reason,
+                        'scan_error': _safe_error_code(slice_error) if slice_error else None,
                     }
 
                 if slice_error is not None:
@@ -2501,6 +2515,7 @@ def main(
         atomic_json(pid_path, {'pid': os.getpid()})
         iterations = 0
         scan_config_error = None
+        last_scan_issue = None
         try:
             while not stop_event.is_set():
                 if args.inbound_scan_config is not None:
@@ -2536,6 +2551,20 @@ def main(
                     inbound_scan_adapter=scan_adapter,
                     stopping=stop_event,
                 )
+                scan = turn['scan']
+                if scan['state'] in {'auth_required', 'needs_review', 'refused', 'unavailable', 'failed'}:
+                    reason = _safe_error_code(scan.get('reason', 'scan_failed'))
+                    error = scan.get('scan_error')
+                    issue = (scan['state'], reason, error)
+                    if issue != last_scan_issue:
+                        print(json.dumps({
+                            'inbound_scan_state': scan['state'],
+                            'reason': reason,
+                            'scan_error': error,
+                        }), flush=True)
+                    last_scan_issue = issue
+                elif scan['state'] == 'scanned':
+                    last_scan_issue = None
                 iterations += 1
                 if max_iterations is not None and iterations >= max_iterations:
                     break

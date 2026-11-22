@@ -4408,6 +4408,36 @@ class InboundScanSchedulerTests(unittest.TestCase):
         self.assertTrue((self.root / first_payload['evidence_path']).is_file())
         self.assertEqual(daily_calls, [100.0])
 
+    def test_parked_group_checks_native_badge_before_account_card(self):
+        anchor = str(self.root / 'config/account.png')
+        fields = ('at_me_badge_anchor', 'at_me_session_group_anchor', 'session_park_anchor', 'session_park_heading_anchor')
+        cfg = worker.InboundScanConfig(
+            enabled=True, contact_ids=('group-1',), self_mention_names=('Bot',),
+            group_inbound={'group-1': dict.fromkeys(fields, anchor)},
+        )
+        adapter = self._make_calibrated_adapter()
+        seen = []
+
+        def peek(target, *, root):
+            seen.append(target.target_key)
+            with self.assertRaises(BlockingIOError):
+                with Queue(root / 'outbox', root / 'receipts').lock(target.account_sha256):
+                    pass
+            return len(seen) > 1
+
+        adapter.group_mention_ready = peek
+        scheduler = worker.InboundScanScheduler(cfg)
+        for now, state in ((100, 'idle_hint_clear'), (115, 'scanned')):
+            result = scheduler.run_scan_slice(
+                self.root, self.config, queue_class=Queue, adapter=adapter,
+                trusted_uid=os.getuid(), config_path=self.config_path,
+                contacts_path=self.contacts_path, manual_reply_path=self.manual_reply_path,
+                monotonic_clock=lambda: now,
+            )
+            self.assertEqual(result['state'], state)
+            self.assertEqual(adapter.events.count('identity'), int(now == 115))
+        self.assertEqual(seen, ['group:group-1', 'group:group-1'])
+
     def test_unread_hint_pre_screen_low_frequency_fallback_and_unverified_hint_rejection(self):
         wall_ms = [1_760_000_000_000]
         mono_s = [200.0]
