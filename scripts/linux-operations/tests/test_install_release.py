@@ -164,6 +164,19 @@ def _prepare_install_host_fixture(root: Path):
 
 
 class InstallReleaseAndAutoReplyTests(unittest.TestCase):
+    def test_task2_probe_uses_the_live_worker_python_path(self):
+        class Podman:
+            @staticmethod
+            def check_output(command):
+                if command[:6] != [
+                    '/usr/bin/podman', 'exec', '--env',
+                    'PYTHONPATH=/home/wechat/.gamma-moments/runtime',
+                    'gamma-wechat-login', '/usr/local/bin/python3',
+                ]:
+                    raise subprocess.CalledProcessError(1, command)
+                return b'GAMMA_TASK2_ADAPTERS_OK\n'
+
+        self.assertTrue(installer.verify_gamma_task2_adapters(run_cmd=Podman))
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(prefix='dsh_ops_release_')
         self.addCleanup(self.tmp.cleanup)

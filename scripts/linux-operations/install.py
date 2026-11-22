@@ -803,7 +803,10 @@ def verify_gamma_task2_adapters(*, run_cmd=subprocess, in_process=False, gamma_p
     cmd = (
         [str(gamma_python), '-B', '-c', TASK2_ADAPTER_PROBE]
         if gamma_python is not None
-        else ['/usr/bin/podman', 'exec', 'gamma-wechat-login', '/usr/local/bin/python3', '-B', '-c', TASK2_ADAPTER_PROBE]
+        else [
+            '/usr/bin/podman', 'exec', '--env', 'PYTHONPATH=' + CONTAINER_MOMENTS_PREFIX + 'runtime',
+            'gamma-wechat-login', '/usr/local/bin/python3', '-B', '-c', TASK2_ADAPTER_PROBE,
+        ]
     )
     try:
         out = run_cmd.check_output(cmd).decode('utf-8', errors='replace')
