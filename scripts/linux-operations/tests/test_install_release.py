@@ -164,6 +164,20 @@ def _prepare_install_host_fixture(root: Path):
 
 
 class InstallReleaseAndAutoReplyTests(unittest.TestCase):
+    def test_owner_notices_is_a_plugin_setting_when_channel_is_last(self):
+        profile = (
+            '- insert:\n'
+            '    - id: im-ingress\n'
+            '      config:\n'
+            '        stateDirectory: /var/lib/dsh-im\n'
+            '        channel:\n'
+            '          kind: feishu\n'
+            '          reconnect: true\n'
+        )
+        updated = installer.update_ingress_profile_owner_notices(profile, {'enabled': True})
+        self.assertIn('\n        ownerNotices:\n          enabled: true\n', updated)
+        self.assertEqual(updated, installer.update_ingress_profile_owner_notices(updated, {'enabled': True}))
+
     def test_task2_probe_uses_the_live_worker_python_path(self):
         class Podman:
             @staticmethod

@@ -694,8 +694,8 @@ def update_ingress_profile_owner_notices(profile_text, owner_notices_cfg):
         cleaned.append(line)
         idx += 1
 
-    # Detect indentation of config children.
-    child_indent = ' ' * (cfg_indent + 2)
+    # Preserve the indentation of direct children even when the last setting is nested.
+    child_indents = []
     insert_at = cfg_idx + 1
     for j in range(cfg_idx + 1, len(cleaned)):
         line = cleaned[j]
@@ -706,8 +706,9 @@ def update_ingress_profile_owner_notices(profile_text, owner_notices_cfg):
         if indent <= cfg_indent:
             insert_at = j
             break
-        child_indent = ' ' * indent
+        child_indents.append(indent)
         insert_at = j + 1
+    child_indent = ' ' * min(child_indents, default=cfg_indent + 2)
 
     block = [f'{child_indent}# BEGIN OCTOPUS OWNER NOTICES', f'{child_indent}ownerNotices:']
     for key, value in owner_notices_cfg.items():
@@ -2003,6 +2004,10 @@ def install(
     staged_feishu_pkg = None
     next_ingress_pkg_json_text = None
     if feishu_package is not None:
+        modules_dir = ingress_profile_dir / 'node_modules'
+        scope_dir = modules_dir / FEISHU_INGRESS_PACKAGE_NAME.split('/', 1)[0]
+        if modules_dir.is_symlink() or scope_dir.is_symlink():
+            raise RuntimeError('Feishu package requires a private ingress profile dependency directory')
         if ingress_pkg_json_path.is_symlink() or not ingress_pkg_json_path.is_file():
             raise RuntimeError(f'Missing ingress profile package.json manifest alongside {ingress_profile_path}')
         pkg_manifest, pkg_files, pkg_digest = validate_offline_feishu_package(feishu_package)
@@ -2421,6 +2426,10 @@ TimeoutStopSec=90s
             raise RuntimeError('Active task not interrupted; restart ingress after it finishes')
         ingress_restart_attempted = True
         run_cmd.check_call(['systemctl', 'restart', 'octopus-ingress.service'])
+        if check_root and policy_notifications.get('enabled') is True:
+            for unused in range(6):
+                time.sleep(1)
+                run_cmd.check_call(['systemctl', 'is-active', '--quiet', 'octopus-ingress.service'])
     except Exception as install_error:
         recovery_errors = []
 
