@@ -829,6 +829,10 @@ function renderInboundBatchBody(batch, events, maxBytes) {
     group: '群聊新消息',
     moments: '朋友圈互动',
   }
+  const groupReviewReasons = {
+    group_cursor_scroll_gap_ambiguous: '群聊历史有断层，需核对消息的新旧',
+    plain_space_mention_not_triggered: '已读到提及文字，尚无法确认微信原生 @',
+  }
   const hasHumanAlert = events.some(item => item.needsReview || item.triggerType === 'needs_human')
   const title = hasHumanAlert
     ? `[微信人工处理提醒 ${batch.notice_id}]`
@@ -849,6 +853,9 @@ function renderInboundBatchBody(batch, events, maxBytes) {
     }
     if (event.evidenceSha256) {
       entry += ` | ref:${event.sourceRef} | 截图:${event.evidenceSha256.slice(0, 12)}`
+      if (event.conversationKind === 'group' && event.needsReview && Object.hasOwn(groupReviewReasons, event.reason)) {
+        entry += ` | ${groupReviewReasons[event.reason]}`
+      }
     } else if (event.reason) {
       entry += ` | 原因:${event.reason}`
     }
@@ -1008,7 +1015,9 @@ export class WechatExchangeProjector {
 
     const selectEvent = this.db.prepare('SELECT 1 FROM ingested_events WHERE event_id=?')
     const selectOpenBatch = this.db.prepare(
-      "SELECT batch_id, opened_at, flush_after, max_flush_at, event_count, account_sha256, contact_id, target_proof, reply_eligible FROM inbound_batches WHERE conversation_key=? AND status='open' ORDER BY opened_at ASC LIMIT 1",
+      `SELECT batch_id, opened_at, flush_after, max_flush_at, event_count, account_sha256, contact_id, target_proof, reply_eligible
+       FROM inbound_batches WHERE conversation_key=? AND status='open' AND reply_eligible=COALESCE(?, reply_eligible)
+       ORDER BY opened_at ASC LIMIT 1`,
     )
     const insertBatch = this.db.prepare(`
       INSERT INTO inbound_batches(
@@ -1044,7 +1053,8 @@ export class WechatExchangeProjector {
         }
         const immediate = event.needsReview || event.triggerType === 'needs_human'
         const eventEligible = event.actionable ? 1 : 0
-        const batch = selectOpenBatch.get(event.conversationKey)
+        // Group review alerts from an uncertain history window must not absorb a verified later mention.
+        const batch = selectOpenBatch.get(event.conversationKey, event.conversationKind === 'group' ? eventEligible : null)
         let batchId
         if (!batch || batch.event_count >= cfg.inboundMaxEventsPerBatch) {
           batchId = digest(`${event.conversationKey}:${event.eventId}`).slice(0, 20)

@@ -1625,6 +1625,53 @@ test('resolveActionableInboundNotice fails closed on target rebind/disable/remov
   )
 })
 
+test('group review alerts do not absorb a later verified mention in the same projection pass', t => {
+  const f = setupFixture(t, {
+    wechatNotifications: { enabled: true, manualReplyEnabled: true, manualReplyMaxAgeSeconds: 3600 },
+  })
+  const target = resolveWechatRegistry(f.policy).contacts.find(contact => contact.id === 'ops_group')
+  const evidence = f.writeEvidence('group-gap.png')
+  const base = {
+    schema_version: 1,
+    account_sha256: f.accountSha,
+    trigger_type: 'group_message',
+    conversation_kind: 'group',
+    conversation_ref: 'ops_group',
+    sender_name: 'OpsUser',
+    source_time: '16:00',
+    evidence_path: evidence.relPath,
+    evidence_sha256: evidence.sha256,
+  }
+  f.writeEvent({
+    ...base,
+    event_id: 'evt-group-gap-review',
+    source_ref: 'grp_review_gap',
+    observed_at: f.now(),
+    text: '@Gamma 需要核查的历史消息',
+    needs_review: true,
+    reason: 'group_cursor_scroll_gap_ambiguous',
+  })
+  f.writeEvent({
+    ...base,
+    event_id: 'evt-group-fresh-mention',
+    source_ref: 'grp_fresh_mention',
+    observed_at: f.now() + 100,
+    text: '@Gamma 新问题',
+    binding_sha256: target.targetProof,
+    sender_ref: 'ops-user',
+    source_proof: { author: 'avatar_anchor', latest: true, trigger: 'mention_self', trigger_verifier: 'anchor' },
+  })
+  f.time(f.now() + 25_000)
+  const { inbound, sealed } = f.projector.projectOnce()
+  assert.equal(inbound.accepted, 2)
+  assert.equal(sealed.length, 2)
+  const reviewHandoff = f.readHandoffs().find(item => item.data.noticeId === sealed[0].noticeId)
+  assert.match(reviewHandoff.data.body, /群聊历史有断层/)
+  assert.throws(() => resolveActionableInboundNotice(f.policy, sealed[0].noticeId, f.now()), /review-only/)
+  const verified = resolveActionableInboundNotice(f.policy, sealed[1].noticeId, f.now())
+  assert.equal(verified.contact.id, 'ops_group')
+})
+
 test('explicit observation-time binding_sha256 is required for actionable friend/group events and resists pre-ingestion rebind and legacy inferred rows', async t => {
   const f = setupFixture(t, {
     wechatNotifications: {
