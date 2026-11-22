@@ -399,7 +399,7 @@ test('registered group mention reaches the model only when the group policy opts
         conversation_kind: 'group', conversation_ref: 'ops_group',
         binding_sha256: f.proofOf('ops_group'), sender_name: 'Registered peer',
         sender_ref: 'registered-peer', source_ref: 'grp_registered_message',
-        source_time: '13:15', observed_at: f.now(), text: '@Gamma\u2005你好',
+        source_time: '13:15', observed_at: f.now(), text: '@Gamma\u2005\u2005你好',
         evidence_path: evidence.relPath, evidence_sha256: evidence.sha256,
         source_proof: {
           author: 'native_copy', latest: true, trigger: 'mention_self', trigger_verifier: 'registered_sender',

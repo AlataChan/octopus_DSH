@@ -486,7 +486,7 @@ export function validateInboundWorkerEvent(
     )) {
       throw new Error('Group quote lacks stable provenance')
     }
-    const mention = trigger === 'mention_self' ? /^@[^@\r\n\u2005]{1,128}\u2005/u.exec(raw.text) : null
+    const mention = trigger === 'mention_self' ? /^(@[^@\r\n\u2005]{1,128})\u2005+/u.exec(raw.text) : null
     if (proof.trigger_verifier === 'registered_sender' && (
       !mention || proof.author !== 'native_copy' || !proof.latest || !raw.text.slice(mention[0].length).trim()
     )) {
@@ -502,7 +502,10 @@ export function validateInboundWorkerEvent(
       triggerVerifier: proof.trigger_verifier ?? null,
       quotedSourceRef: proof.quoted_source_ref ?? null,
       textSha256: digest(raw.text),
-      exactText: text === raw.text || (Boolean(question) && text === raw.text.replace(/\u2005/g, ' ')),
+      exactText: text === raw.text || (Boolean(question) && (
+        text === raw.text.replace(/\u2005/g, ' ')
+        || text === mention[1] + ' ' + raw.text.slice(mention[0].length).replace(/\u2005/g, ' ')
+      )),
       question,
     })
   }
