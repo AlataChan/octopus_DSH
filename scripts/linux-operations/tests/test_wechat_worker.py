@@ -4181,6 +4181,7 @@ class InboundScanSchedulerTests(unittest.TestCase):
             {'enabled': True, 'idle_scan_interval_seconds': 20.0, 'fallback_interval_seconds': 10.0},
             {'enabled': True, 'fairness_max_deferral_seconds': 1.0},
             {'enabled': True, 'fairness_max_outbound_ticks': 0},
+            {'enabled': True, 'contact_ids': ['friend-1', 'friend-1']},
             {'enabled': True, 'registered_own_posts': ['*']},
             {'enabled': True, 'registered_own_posts': ['post-1', 'post-1']},
             {'enabled': True, 'registered_own_posts': [{'own_post_id': 'post-1', 'extra': 1}]},
@@ -4215,6 +4216,16 @@ class InboundScanSchedulerTests(unittest.TestCase):
             resolved['targets'][2].binding_sha256,
             worker.compute_group_binding_sha256(self.root, self.config, self.sidecar['contacts'][2]),
         )
+        scoped = worker.InboundScanConfig(
+            enabled=True, contact_ids=('group-1',), self_mention_names=('Bot',),
+            group_inbound={'group-1': {'sender_verify_mode': 'pinned_only'}},
+        )
+        group = worker.resolve_inbound_scan_targets(
+            self.root, self.config, trusted_uid=os.getuid(), config_path=self.config_path,
+            contacts_path=self.contacts_path, manual_reply_path=self.manual_reply_path, scan_config=scoped,
+        )['targets']
+        self.assertEqual([target.target_key for target in group], ['group:group-1'])
+        self.assertEqual(group[0].effective_config['sender_verify_mode'], 'pinned_only')
 
         # Disabled worker config or disabled/missing manual_reply view keeps scan disabled cleanly.
         self.assertEqual(

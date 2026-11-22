@@ -834,7 +834,13 @@ supported = []
 if model.enabled:
     if not payload['notifications']:
         raise ValueError('inbound scanning requires enabled WeChat notifications')
-    kinds = set(payload['contactKinds'])
+    selected_ids = None if model.contact_ids is None else set(model.contact_ids)
+    if selected_ids is not None and selected_ids - {contact['id'] for contact in payload['contacts']}:
+        raise ValueError('inbound scanning references an unregistered contact')
+    kinds = {
+        contact['type'] for contact in payload['contacts']
+        if contact['enabled'] and (selected_ids is None or contact['id'] in selected_ids)
+    }
     if any(post.enabled for post in model.registered_own_posts):
         kinds.add('own_post')
     if not kinds:
@@ -886,7 +892,7 @@ def verify_gamma_inbound_scan(source, doc, *, sidecar_doc, notifications, in_pro
         'source': (source / 'wechat_worker.py').read_text(encoding='utf-8'),
         'config': doc,
         'notifications': notifications,
-        'contactKinds': sorted({c['type'] for c in sidecar_doc['contacts'] if c['enabled']}),
+        'contacts': [{key: c[key] for key in ('id', 'type', 'enabled')} for c in sidecar_doc['contacts']],
         'groupIds': [c['id'] for c in sidecar_doc['contacts'] if c['type'] == 'group'],
     }
     out = _run_captured(cmd, input_text=json.dumps(payload))

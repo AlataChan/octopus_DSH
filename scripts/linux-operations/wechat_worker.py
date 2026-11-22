@@ -40,7 +40,7 @@ TERMINAL_RECEIPT_STATES = frozenset({
 INBOUND_SCAN_SCHEMA_VERSION = 1
 INBOUND_SCAN_TARGET_KINDS = frozenset({'friend', 'group', 'own_post'})
 INBOUND_SCAN_BOUNDS = {
-    'slice_budget_seconds': (0.5, 15.0),
+    'slice_budget_seconds': (0.5, 55.0),
     'idle_scan_interval_seconds': (2.0, 300.0),
     'fallback_interval_seconds': (2.0, 3600.0),
     'fairness_max_deferral_seconds': (5.0, 600.0),
@@ -1379,10 +1379,12 @@ class RegisteredOwnPostTarget:
 
 
 def _validate_group_scan_options(group_id, group):
-    anchor_fields = {'at_me_badge_anchor', 'visual_mention_anchor'}
+    anchor_fields = {'at_me_badge_anchor', 'at_me_session_group_anchor', 'visual_mention_anchor'}
     if (not isinstance(group_id, str) or not CONTACT_ID_RE.fullmatch(group_id)
-            or not isinstance(group, dict) or set(group) - (anchor_fields | {'registered_authors'})):
+            or not isinstance(group, dict) or set(group) - (anchor_fields | {'registered_authors', 'sender_verify_mode'})):
         raise ValueError('invalid_group_inbound_config')
+    if group.get('sender_verify_mode', 'auto') not in ('auto', 'pinned_only', 'card_copy'):
+        raise ValueError('invalid_group_sender_verify_mode')
     for name in anchor_fields & set(group):
         path = group[name]
         if not isinstance(path, str) or not path.startswith('/'):
@@ -1412,9 +1414,11 @@ def _verified_group_scan_options(root, group, *, trusted_uid):
         return resolved
 
     result = {}
-    for field in ('at_me_badge_anchor', 'visual_mention_anchor'):
+    for field in ('at_me_badge_anchor', 'at_me_session_group_anchor', 'visual_mention_anchor'):
         if field in group:
             result[field] = trusted_anchor(group[field])
+    if 'sender_verify_mode' in group:
+        result['sender_verify_mode'] = group['sender_verify_mode']
     if 'registered_authors' in group:
         result['registered_authors'] = []
         for author in group['registered_authors']:
@@ -1438,6 +1442,7 @@ class InboundScanConfig:
     fairness_max_deferral_seconds: float = 30.0
     fairness_max_outbound_ticks: Optional[int] = None
     use_unread_hint: bool = True
+    contact_ids: Optional[Tuple[str, ...]] = None
     registered_own_posts: Tuple[Union[RegisteredOwnPostTarget, str], ...] = ()
     self_mention_names: Tuple[str, ...] = ()
     group_inbound: Optional[dict] = None
@@ -1468,6 +1473,12 @@ class InboundScanConfig:
                 INBOUND_SCAN_BOUNDS['fairness_max_outbound_ticks'],
                 integer_only=True,
             )
+        if self.contact_ids is not None:
+            if (not isinstance(self.contact_ids, (tuple, list)) or len(self.contact_ids) > 50
+                    or any(not isinstance(cid, str) or not CONTACT_ID_RE.fullmatch(cid) for cid in self.contact_ids)
+                    or len(set(self.contact_ids)) != len(self.contact_ids)):
+                raise ValueError('invalid_inbound_contact_ids')
+            object.__setattr__(self, 'contact_ids', tuple(self.contact_ids))
         if not isinstance(self.registered_own_posts, (tuple, list)):
             raise ValueError('invalid_registered_own_post')
         if len(self.registered_own_posts) > MAX_REGISTERED_OWN_POSTS:
@@ -1520,6 +1531,7 @@ class InboundScanConfig:
             'fairness_max_deferral_seconds',
             'fairness_max_outbound_ticks',
             'use_unread_hint',
+            'contact_ids',
             'registered_own_posts',
             'self_mention_names',
             'group_inbound',
@@ -1693,7 +1705,12 @@ def resolve_inbound_scan_targets(
         sidecar_doc = _load_sidecar_document(sidecar_file, config, root_path, trusted_uid=trusted_uid)
         contacts_list = sidecar_doc['contacts']
         _validate_contacts_list(contacts_list, root_path)
+        selected_ids = None if cfg_model.contact_ids is None else set(cfg_model.contact_ids)
+        if selected_ids is not None and selected_ids - {contact['id'] for contact in contacts_list}:
+            raise ValueError('unregistered_inbound_contact')
         for contact in contacts_list:
+            if selected_ids is not None and contact['id'] not in selected_ids:
+                continue
             if contact.get('enabled') is not True:
                 continue
             ctype = contact.get('type')
@@ -1817,7 +1834,8 @@ def resolve_inbound_scan_targets(
                 if resolved_name_anchor is not None:
                     effective['group_name_anchor'] = resolved_name_anchor
                 # Routing and author pins come from the root-owned inbound policy.
-                for key in ('self_mention_names', 'registered_authors', 'at_me_badge_anchor', 'visual_mention_anchor',
+                for key in ('self_mention_names', 'registered_authors', 'at_me_badge_anchor',
+                            'at_me_session_group_anchor', 'visual_mention_anchor',
                             'sender_verify_mode', 'own_sender_refs', 'automated_sender_refs', 'at_all_tokens'):
                     effective.pop(key, None)
                 if cfg_model.self_mention_names:
@@ -2087,12 +2105,7 @@ class InboundScanScheduler:
         else:
             self.outbound_deferred_since = None
             self.consecutive_outbound_ticks = 0
-            fallback_due = (
-                self.last_scan_mono is None
-                or now_mono - self.last_scan_mono >= cfg.fallback_interval_seconds
-            )
-            if (not fallback_due
-                    and self.last_attempt_mono is not None
+            if (self.last_attempt_mono is not None
                     and now_mono - self.last_attempt_mono < cfg.idle_scan_interval_seconds):
                 return {'state': 'cooldown', 'reason': 'idle_interval'}
 
