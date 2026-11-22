@@ -15,7 +15,7 @@ export const AUTO_REPLY_POLICY_BOUNDS = Object.freeze({
   groupCooldownSeconds: [60, 86_400],
   maxInboundAgeSeconds: [60, 86_400],
   maxTailAgeSeconds: [5, 300],
-  maxReportAgeSeconds: [60, 86_400],
+  maxReportAgeSeconds: [60, 4 * 86_400],
   claimLeaseSeconds: [5, 600],
   adapterTimeoutMs: [20, 120_000],
   maxAttempts: [1, 3],
@@ -335,6 +335,7 @@ const AUTO_REPLY_POLICY_OPTIONAL_FIELDS = Object.freeze([
   'projectOwnerNotices',
   'maxBatchesPerCycle',
   'pumpIntervalSeconds',
+  'cnPublishedReportDir',
   'transport',
 ])
 
@@ -580,6 +581,10 @@ export function validateWechatAutoReplyPolicy(value) {
     fields(value, ['enabled'], AUTO_REPLY_POLICY_OPTIONAL_FIELDS)
   }
   validateAutoReplyCoreFields(value)
+  if (Object.hasOwn(value, 'cnPublishedReportDir')
+    && !isAbsolute(assertCleanAutoReplyString(value.cnPublishedReportDir, 'cnPublishedReportDir', 512))) {
+    throw new Error('Expected absolute cnPublishedReportDir path')
+  }
   if (Object.hasOwn(value, 'projectOwnerNotices') && typeof value.projectOwnerNotices !== 'boolean') {
     throw new Error('Invalid wechatAutoReply projectOwnerNotices flag')
   }
@@ -629,6 +634,7 @@ export function wechatAutoReplyPolicy(policy) {
     projectOwnerNotices: cfg.projectOwnerNotices === true,
     maxBatchesPerCycle: cfg.maxBatchesPerCycle ?? DEFAULT_WECHAT_AUTOREPLY_RUNTIME_POLICY.maxBatchesPerCycle,
     pumpIntervalSeconds: cfg.pumpIntervalSeconds ?? DEFAULT_WECHAT_AUTOREPLY_RUNTIME_POLICY.pumpIntervalSeconds,
+    cnPublishedReportDir: cfg.cnPublishedReportDir ?? null,
     transport: Object.freeze({ ...cfg.transport }),
   })
 }

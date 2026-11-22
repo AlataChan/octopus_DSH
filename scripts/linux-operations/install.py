@@ -29,6 +29,7 @@ RELEASE_FILES = [
     'wechat-inbox.mjs',
     'wechat-autoreply.mjs',
     'wechat-autoreply-dsh.mjs',
+    'wechat-report-facts.mjs',
     'wechat_worker.py',
     'install.py',
 ]
@@ -315,7 +316,7 @@ AUTO_REPLY_OPTIONAL_KEYS = frozenset({
     'maxInboundAgeSeconds', 'maxTailAgeSeconds', 'maxReportAgeSeconds', 'claimLeaseSeconds',
     'adapterTimeoutMs', 'maxAttempts', 'maxContextMessages', 'maxFriendReplyChars',
     'maxGroupReplyChars', 'bannedExpressions', 'conversations', 'projectOwnerNotices',
-    'maxBatchesPerCycle', 'pumpIntervalSeconds', 'transport', 'environmentFile',
+    'maxBatchesPerCycle', 'pumpIntervalSeconds', 'transport', 'environmentFile', 'cnPublishedReportDir',
 })
 AUTO_REPLY_TRANSPORT_KEYS = frozenset({
     'mode', 'installAnchor', 'provider', 'model', 'maxTokens', 'maxRawOutputBytes',

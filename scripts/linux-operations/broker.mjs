@@ -10,6 +10,7 @@ import { fields, readPolicy, wechatAutoReplyPolicy, wechatNotificationsPolicy } 
 import { Operations, QUEUED_WECHAT_KINDS, atomicJson, authority, computeAdhocMomentsBindingSha256, digest, resolveWechatRegistry, shanghaiDate, validateAdhocMomentText } from './operations.mjs'
 import { WechatExchangeProjector, readCapturedWechatInbox, readTrustedManualReplyView, resolveActionableInboundNotice, resolveManualReplyViewPath } from './wechat-inbox.mjs'
 import { canonicalTransportKey, checkOperatorBindingActive, createWechatAutoReplyPump } from './wechat-autoreply.mjs'
+import { createCnPublishedReportProvider } from './wechat-report-facts.mjs'
 
 const exec = promisify(execFile)
 const MAX_FRAME = 16384
@@ -772,6 +773,9 @@ export function createBrokerProjectionLoop(policy, projectorOptions = {}) {
   let stopped = false
   let timer = null
   const autoReplyCfg = wechatAutoReplyPolicy(policy)
+  const reportPublicationProvider = autoReplyCfg.cnPublishedReportDir
+    ? createCnPublishedReportProvider(autoReplyCfg.cnPublishedReportDir, { trustedUid: process.getuid?.() ?? 0 })
+    : null
   const autoReplyPump = autoReplyCfg.enabled
     ? createWechatAutoReplyPump({
       policy,
@@ -780,7 +784,9 @@ export function createBrokerProjectionLoop(policy, projectorOptions = {}) {
       store: autoReplyStore,
       adapter: autoReplyAdapter,
       adapterFactory: autoReplyAdapterFactory,
-      resolveEvaluationInputs: resolveAutoReplyInputs,
+      resolveEvaluationInputs: reportPublicationProvider
+        ? async input => ({ reportPublicationProvider, ...await resolveAutoReplyInputs?.(input) })
+        : resolveAutoReplyInputs,
       dispatchUnattended: dispatchAutomaticReply,
       clock: inboxOptions.clock,
       statUid: inboxOptions.statUid,

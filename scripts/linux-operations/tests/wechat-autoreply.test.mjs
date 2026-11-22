@@ -18,13 +18,14 @@ import {
   rmSync,
   statSync,
   unlinkSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { Operations, digest, resolveWechatRegistry } from '../operations.mjs'
+import { Operations, digest, resolveWechatRegistry, shanghaiDate } from '../operations.mjs'
 import { validatePolicy, wechatAutoReplyPolicy } from '../policy.mjs'
 import { createBrokerProjectionLoop, startBroker } from '../broker.mjs'
 import { WechatExchangeProjector, formatNoticeId } from '../wechat-inbox.mjs'
@@ -387,6 +388,72 @@ function setupAutoReplyFixture(t, { manualReplyPaused = false, manualReplyLease 
     buildTailSnapshot,
   }
 }
+
+test('configured broker supplies a dated, delivered CN report for a group market question', async t => {
+  const f = setupAutoReplyFixture(t)
+  const reportRoot = realpathSync(f.root)
+  const publishedAt = f.now() - 2 * 86_400_000
+  const day = shanghaiDate(publishedAt)
+  const history = join(reportRoot, 'report_history')
+  mkdirSync(history, { mode: 0o700 })
+  const reportPath = join(history, `${day}.json`)
+  writeFileSync(reportPath, JSON.stringify({
+    schema_version: 1, trade_date: day,
+    items: { 510500: { iv: 33.935, iv_date_valid: true, measurement_date: day, month: '2611' } },
+  }), { mode: 0o600 })
+  utimesSync(reportPath, new Date(publishedAt), new Date(publishedAt))
+  const report = {
+    mode: 'daily_close', state: 'written', history: 'written', sent: true,
+    channels: { feishu: { returned: true } }, trade_date: day,
+    started_at: new Date(publishedAt - 60_000).toISOString(), finished_at: new Date(publishedAt).toISOString(),
+    final_body_sha256: digest('published report body'),
+  }
+  const undelivered = { ...report, trade_date: shanghaiDate(f.now()), finished_at: new Date(f.now()).toISOString(), sent: false }
+  writeFileSync(join(reportRoot, 'cn_daily_delivery_attempts.jsonl'),
+    JSON.stringify(report) + '\n' + JSON.stringify(undelivered) + '\n', { mode: 0o600 })
+  const policyPath = join(f.root, 'operations.json')
+  const cfg = {
+    enabled: true, policyVersion: 2, maxReportAgeSeconds: 4 * 86_400,
+    cnPublishedReportDir: reportRoot, transport: { mode: 'adapter' },
+    conversations: { 'group:ops_group': { mode: 'unattended', allowPublishedReportFacts: true } },
+  }
+  writeFileSync(policyPath, JSON.stringify({ ...f.policy, wechatAutoReply: cfg }), { mode: 0o600 })
+  const evidence = f.writeEvidence('market-group.png')
+  const event = {
+    schema_version: 1, event_id: 'evt-market-group',
+    account_sha256: f.accountSha, trigger_type: 'group_message',
+    conversation_kind: 'group', conversation_ref: 'ops_group', binding_sha256: f.proofOf('ops_group'),
+    sender_name: 'Peer', sender_ref: 'verified-peer', source_ref: 'grp_market_question',
+    source_time: '13:15', observed_at: f.now(), text: '@Gamma\u2005中证500的波动率怎么样？',
+    evidence_path: evidence.relPath, evidence_sha256: evidence.sha256,
+    source_proof: { author: 'avatar_anchor', latest: true, trigger: 'mention_self', trigger_verifier: 'anchor' },
+  }
+  assert.equal(f.sealEvents([event]).sealed.length, 1)
+  const server = startBroker(policyPath, {
+    clock: f.now,
+    autoReplyAdapter: {
+      async generate(request) {
+        const [fact] = request.envelope.publishedReportFacts
+        assert.equal(fact.reportDigest, report.final_body_sha256)
+        assert.match(fact.text, /中证500ETF.*33\.94%/u)
+        assert.ok(fact.text.startsWith(day))
+        return { providerRunId: 'dated_cn_report', rawOutput: { decision: 'answer', answer: day + '日报，中证500ETF的平值IV为33.94%。' } }
+      },
+    },
+  })
+  t.after(() => new Promise(resolve => server.close(resolve)))
+  await once(server, 'listening')
+  const outbox = join(f.wechatRoot, 'adhoc', 'outbox')
+  const deadline = Date.now() + 5000
+  while (!readdirSync(outbox).some(file => file.endsWith('.json')) && Date.now() < deadline) await delay(20)
+  const [file] = readdirSync(outbox).filter(name => name.endsWith('.json'))
+  assert.ok(file, 'expected a dated group reply')
+  assert.equal(JSON.parse(readFileSync(join(outbox, file), 'utf8')).contact_id, 'ops_group')
+
+  for (const text of ['介绍一下你自己', '你是观察者Gamma吗？', '什么是隐含波动率？']) {
+    assert.equal(classifyInboundRiskAndFacts({ events: [{ text }], conversationRule: {} }).route, 'allow')
+  }
+})
 
 test('registered group mention reaches the model only when the group policy opts in', async t => {
   for (const enabled of [false, true]) {

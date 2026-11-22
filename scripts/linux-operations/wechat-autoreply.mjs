@@ -113,7 +113,9 @@ const FINANCIAL_TRANSFER_RE = /(?:转账|汇款|收款|付款|打款|打钱|发�
 const SENSITIVE_DISCLOSURE_RE = /(?:微信号|手机号|手机号码|电话号码|身份证|银行账号|验证码|登录密码|密码|密钥|私钥|内网|服务器|ssh|api[_-]?key|access[_-]?token|operations\.json|operations\.sqlite|wechat-inbox|wechatroot|ip地址)/i
 const LIVE_TRADE_OR_PROMISE_RE = /(?:买入|卖出|加仓|减仓|平仓|建仓|重仓|满仓|清仓|止损|止盈|抄底|逃顶|喊单|带单|具体点位|目标价|保证收益|承诺收益|稳赚|保本|必涨|必跌|保底收益|年化\s*\d)/i
 const UNPUBLISHED_RESEARCH_RE = /(?:未发布|还没发布|尚未发布|未公开|内幕消息|内部研报|提前发我|盘中实时|实时净值|预测涨跌|明天怎么走)/i
-const RESEARCH_TOPIC_RE = /(?:日报|波动率|期权|gamma|分歧假设|回撤|净值|估值|策略|标的|持仓|行情|仓位|研究报告|研报|隐含波动|skew|vix)/i
+const RESEARCH_TOPIC_RE = /(?:日报|市场|大盘|盘面|收盘|涨跌|指数|中证|创业板|科创|波动率|期权|gamma|分歧假设|回撤|净值|估值|策略|标的|持仓|行情|仓位|研究报告|研报|隐含波动|\b(?:iv|pcr|skew|vix)\b)/i
+const IDENTITY_QUESTION_RE = /^(?:请)?(?:介绍(?:一下)?(?:你)?自己|你是谁|你是做什么的|你能做什么|你是什么(?:助手|机器人)|你是(?:观察者\s*)?Gamma(?:吗)?)\s*[。！!?？]*$/iu
+const MARKET_DEFINITION_RE = /^(?:请(?:问|解释一下)?\s*)?(?:什么是\s*(?:期权|隐含波动率|波动率|IV|PCR|VIX|skew|Gamma)|(?:期权|隐含波动率|波动率|IV|PCR|VIX|skew|Gamma)\s*(?:是什么|是什么意思|怎么算|如何计算))\s*[。！!?？]*$/iu
 const PROMPT_INJECTION_RE = /(?:ignore\s+(?:all\s+)?(?:previous|prior)\s+instructions|忽略(?:以上|之前|所有)(?:规则|指令|限制)|改发给|转发送给|调用\s*(?:wechat_|restart_|set_limits|shell|bash)|<\|im_start\|>)/i
 const DRAFT_SECRET_RE = /(?:Bearer\s+[A-Za-z0-9._-]{6,}|(?:sk|ghp)_[A-Za-z0-9_-]{12,}|(?:api[_-]?key|access[_-]?token|password)\s*[:=])/i
 
@@ -828,6 +830,10 @@ async function resolveVerifiedPublishedReport({
  * @param {object} params
  * @returns {{ route: 'allow' | 'needs_human', category: string | null, reason: string | null }}
  */
+function requiresPublishedReport(text) {
+  return RESEARCH_TOPIC_RE.test(text) && !IDENTITY_QUESTION_RE.test(text.trim()) && !MARKET_DEFINITION_RE.test(text.trim())
+}
+
 export function classifyInboundRiskAndFacts({
   events,
   conversationRule,
@@ -857,7 +863,7 @@ export function classifyInboundRiskAndFacts({
   if (PROMPT_INJECTION_RE.test(combined)) {
     return { route: 'needs_human', category: 'untrusted_injection_or_unknown', reason: 'Inbound contains untrusted instruction or target-override attempt' }
   }
-  if (RESEARCH_TOPIC_RE.test(combined)) {
+  if (events.some(ev => requiresPublishedReport(ev.text ?? '') || requiresPublishedReport(ev.quotedText ?? ''))) {
     if (!conversationRule?.allowPublishedReportFacts) {
       return { route: 'needs_human', category: 'research_requires_report_opt_in', reason: 'Research topic requires published-report opt-in for this conversation' }
     }
@@ -1942,8 +1948,11 @@ export class WechatAutoReplyStore {
       batchExpiresAt,
     } = initialGate
 
+    const promptEvents = events.map(event => event.sourceProof?.question
+      ? { ...event, text: event.sourceProof.question } : event)
     let verifiedReportBundle = null
-    if (convRule.allowPublishedReportFacts && options.reportPublicationProvider) {
+    if (convRule.allowPublishedReportFacts && options.reportPublicationProvider
+      && promptEvents.some(ev => requiresPublishedReport(ev.text ?? '') || requiresPublishedReport(ev.quotedText ?? ''))) {
       const reportHealth = this._checkBackgroundOwnerHealth('report', options.reportPublicationProvider)
       if (!reportHealth.ok) {
         return this.persistImmediateDecision({
@@ -2027,8 +2036,6 @@ export class WechatAutoReplyStore {
       verifiedReportBundle = reportCheck.bundle
     }
 
-    const promptEvents = events.map(event => event.sourceProof?.question
-      ? { ...event, text: event.sourceProof.question } : event)
     const risk = classifyInboundRiskAndFacts({
       events: promptEvents,
       conversationRule: convRule,
