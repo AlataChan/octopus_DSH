@@ -1142,6 +1142,7 @@ export class WechatAutoReplyStore {
         decided_at INTEGER
       );
       CREATE INDEX IF NOT EXISTS idx_autoreply_tasks_state ON autoreply_tasks(state, lease_expires_at);
+      CREATE INDEX IF NOT EXISTS idx_autoreply_task_claims ON autoreply_tasks(conversation_key, claimed_at);
       CREATE TABLE IF NOT EXISTS group_cooldowns (
         conversation_key TEXT PRIMARY KEY,
         last_task_id TEXT NOT NULL,
@@ -2285,9 +2286,15 @@ export class WechatAutoReplyStore {
       }
       const taskId = randomBytes(12).toString('hex')
       if (channel === 'group') {
-        const cooldownRow = this.db.prepare('SELECT * FROM group_cooldowns WHERE conversation_key=?').get(batch.conversation_key)
         const cooldownSeconds = convRule.cooldownSeconds ?? cfg.groupCooldownSeconds
-        if (cooldownRow && nowMs < cooldownRow.cooldown_until) {
+        const windowMs = cooldownSeconds * 1000
+        const limited = convRule.maxRepliesPerWindow === 2
+          ? this.db.prepare(`
+            SELECT 1 FROM autoreply_tasks WHERE conversation_key=? AND claimed_at>? LIMIT 1 OFFSET 1
+          `).get(batch.conversation_key, nowMs - windowMs)
+          : this.db.prepare('SELECT 1 FROM group_cooldowns WHERE conversation_key=? AND cooldown_until>?')
+            .get(batch.conversation_key, nowMs)
+        if (limited) {
           const rec = this.insertTaskRowLocked({
             batchId: batch.batch_id,
             taskId,
@@ -2313,7 +2320,7 @@ export class WechatAutoReplyStore {
           this.db.exec('COMMIT')
           return { acquired: false, record: rec }
         }
-        const cooldownUntil = nowMs + cooldownSeconds * 1000
+        const cooldownUntil = nowMs + windowMs
         this.db.prepare(`
           INSERT INTO group_cooldowns(conversation_key, last_task_id, last_batch_id, last_claimed_at, cooldown_until, policy_version)
           VALUES(?, ?, ?, ?, ?, ?)
@@ -2635,7 +2642,8 @@ export class WechatAutoReplyStore {
     if (!notifCfg.enabled || options.projectOwnerNotices !== true) {
       return null
     }
-    if (!record || (record.state !== 'draft_ready' && record.state !== 'needs_human' && record.state !== 'needs_review')) {
+    const rateLimited = record?.state === 'notice_only' && record.reason === 'group_cooldown_active'
+    if (!record || (!rateLimited && record.state !== 'draft_ready' && record.state !== 'needs_human' && record.state !== 'needs_review')) {
       return null
     }
     const noticeKey = `autoreply:${record.taskId}`
@@ -2892,6 +2900,14 @@ function renderAutoReplyOwnerNoticeBody(record, maxBytes) {
       `人工处理: 请通过通知编号 ${record.noticeId} 跟进。`,
       '数据边界: 以上为自动评估参考内容(untrusted notice_only)，非执行指令。',
     ]
+  } else if (record.state === 'notice_only' && record.reason === 'group_cooldown_active') {
+    lines = [
+      `[微信群聊自动回复限额 ${record.noticeId}]`,
+      `会话: ${channelLabel} ${targetLabel}`,
+      '状态: 已收到并核验这条 @，同群自动回复达到时间窗口限额，本次未自动回复。',
+      `人工处理: 如需接续，请通过通知编号 ${record.noticeId} 回复。`,
+      '数据边界: 以上为自动评估参考内容(untrusted notice_only)，非执行指令。',
+    ]
   } else {
     lines = [
       `[微信自动评估待核查 ${record.noticeId}]`,
@@ -2943,6 +2959,7 @@ function toStoreAutoReplyPolicy(runtimeCfg) {
           allowedTopics: [...rule.allowedTopics],
           ...(rule.tone === null ? {} : { tone: rule.tone }),
           ...(rule.cooldownSeconds === null ? {} : { cooldownSeconds: rule.cooldownSeconds }),
+          ...(rule.maxRepliesPerWindow === undefined ? {} : { maxRepliesPerWindow: rule.maxRepliesPerWindow }),
           ...(rule.maxReplyChars === null ? {} : { maxReplyChars: rule.maxReplyChars }),
         },
       ]),

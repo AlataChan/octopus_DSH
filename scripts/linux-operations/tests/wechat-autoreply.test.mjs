@@ -990,6 +990,59 @@ test('delayed provider past 60s lease (no external recovery) and mid-generation 
   assert.equal(closedRes.sendAction, 'none')
 })
 
+test('a group can allow two replies per rolling window and explains later rate limiting', async t => {
+  const f = setupAutoReplyFixture(t)
+  const evidence = f.writeEvidence('group-window.png')
+  const conv = 'group:ops_group'
+  const policy = {
+    enabled: true, policyVersion: 3,
+    conversations: { [conv]: { mode: 'draft_only', cooldownSeconds: 300 } },
+  }
+  let store = new WechatAutoReplyStore(f.policy, policy, { clock: f.now })
+  t.after(() => store.close())
+  let calls = 0
+  const adapter = { async generate() {
+    calls += 1
+    return { providerRunId: `group-window-${calls}`, rawOutput: { decision: 'answer', answer: '收到，我来说明。' } }
+  } }
+  function inquiry(number) {
+    const event = {
+      schema_version: 1, event_id: `evt-group-window-${number}`, account_sha256: f.accountSha,
+      trigger_type: 'group_message', conversation_kind: 'group', conversation_ref: 'ops_group',
+      binding_sha256: f.proofOf('ops_group'), sender_name: 'Alice', sender_ref: 'alice',
+      source_ref: `grp-msg-window-${number}`, source_time: '10:01', observed_at: f.now(),
+      text: `@观察者　请介绍一下你自己 ${number}`,
+      evidence_path: evidence.relPath, evidence_sha256: evidence.sha256,
+    }
+    const [sealed] = f.sealEvents([event]).sealed
+    const batch = f.projector.getProjectedNotice(sealed.noticeKey).source_ref
+    return () => store.evaluateSealedBatch(batch, {
+      eventSignals: { [event.event_id]: f.groupMentionSignal('ops_group', evidence.sha256) }, adapter,
+    })
+  }
+  assert.equal((await inquiry(1)()).state, 'draft_ready')
+
+  store.close()
+  const groupRule = { ...policy.conversations[conv], maxRepliesPerWindow: 2 }
+  store = new WechatAutoReplyStore(f.policy, { ...policy, conversations: { [conv]: groupRule } }, { clock: f.now })
+  assert.equal((await inquiry(2)()).state, 'draft_ready')
+  const originalThird = inquiry(3)
+  const limited = await originalThird()
+  assert.equal(limited.reason, 'group_cooldown_active')
+  assert.equal(limited.state, 'notice_only')
+  assert.equal(limited.sendAction, 'none')
+  assert.equal(calls, 2)
+  const projection = store.projectOutcomeOwnerNotice(limited, { projectOwnerNotices: true })
+  const handoff = JSON.parse(readFileSync(join(f.policy.wechatNotifications.handoffDir, projection.handoffFile), 'utf8'))
+  assert.match(handoff.body, /已收到并核验这条 @，同群自动回复达到时间窗口限额/)
+  assert.equal(store.projectOutcomeOwnerNotice(limited, { projectOwnerNotices: true }).duplicate, true)
+
+  f.advance(226_000)
+  assert.equal((await inquiry(4)()).state, 'draft_ready')
+  assert.equal((await originalThird()).reason, 'group_cooldown_active')
+  assert.equal(calls, 3)
+})
+
 test('group @self and quote-self proof requirements, @all notice-only, untrusted label refusal, unsupported channel, and atomic 5m cooldown', async t => {
   const f = setupAutoReplyFixture(t)
   const ev = f.writeEvidence('grp-trig.png')

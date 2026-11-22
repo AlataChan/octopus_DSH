@@ -354,7 +354,7 @@ function validateAutoReplyConversationRule(key, rule, defaults) {
     throw new Error(`Invalid autoReply conversation key: ${key}`)
   }
   const channel = key.split(':')[0]
-  fields(rule, ['mode'], ['allowPublishedReportFacts', 'allowRegisteredSenderMentions', 'allowedTopics', 'tone', 'cooldownSeconds', 'maxReplyChars'])
+  fields(rule, ['mode'], ['allowPublishedReportFacts', 'allowRegisteredSenderMentions', 'allowedTopics', 'tone', 'cooldownSeconds', 'maxRepliesPerWindow', 'maxReplyChars'])
   if (!AUTOREPLY_CONVERSATION_MODES.includes(rule.mode)) {
     throw new Error(`Invalid autoReply conversation mode: ${rule.mode}`)
   }
@@ -388,6 +388,10 @@ function validateAutoReplyConversationRule(key, rule, defaults) {
     }
     cooldownSeconds = rule.cooldownSeconds
   }
+  if (Object.hasOwn(rule, 'maxRepliesPerWindow')
+    && (channel !== 'group' || ![1, 2].includes(rule.maxRepliesPerWindow))) {
+    throw new Error('Invalid autoReply group maxRepliesPerWindow')
+  }
   const maxCeiling = channel === 'group' ? defaults.maxGroupReplyChars : defaults.maxFriendReplyChars
   let maxReplyChars = maxCeiling
   if (Object.hasOwn(rule, 'maxReplyChars') && rule.maxReplyChars !== null) {
@@ -407,6 +411,7 @@ function validateAutoReplyConversationRule(key, rule, defaults) {
     allowedTopics,
     tone,
     cooldownSeconds,
+    ...(Object.hasOwn(rule, 'maxRepliesPerWindow') ? { maxRepliesPerWindow: rule.maxRepliesPerWindow } : {}),
     maxReplyChars,
   })
 }

@@ -28,6 +28,7 @@ export interface WechatAutoReplyConversationRule {
   readonly allowedTopics?: readonly string[] | undefined
   readonly tone?: string | null | undefined
   readonly cooldownSeconds?: number | null | undefined
+  readonly maxRepliesPerWindow?: 1 | 2 | undefined
   readonly maxReplyChars?: number | null | undefined
 }
 
