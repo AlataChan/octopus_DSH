@@ -88,6 +88,8 @@ export const AUTOREPLY_TASK_STATES = Object.freeze([
   'notice_only',
   'unsupported',
   'expired',
+  'sent_verified',
+  'not_sent',
 ])
 export const DEFAULT_WECHAT_AUTOREPLY_POLICY = DEFAULT_WECHAT_AUTOREPLY_CORE_POLICY
 
@@ -103,6 +105,10 @@ const SAFE_PROVIDER_RUN_RE = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{3,127}$/
 const MAX_EVIDENCE_BYTES = 2 * 1024 * 1024
 const MIN_OBSERVED_MS = 1_700_000_000_000
 const MAX_FUTURE_SKEW_MS = 60_000
+const AUTOMATIC_SEND_JOB_MS = 180_000
+const AUTOMATIC_DRAFT_LIFETIME_MS = 60_000
+const DEFINITELY_NOT_SENT_RECEIPTS = new Set(['failed_before_submit', 'refused', 'expired', 'auth_required'])
+const GROUP_LIMIT_REASONS = new Set(['group_cooldown_active', 'group_model_attempt_limit', 'group_send_limit'])
 const TRUSTED_AUTHOR_VERIFIERS = new Set(['left_bubble', 'avatar_anchor', 'card_anchor', 'native_copy'])
 const TRUSTED_MENTION_VERIFIERS = new Set(['anchor', 'native_copy', 'mention_chip'])
 const TRUSTED_QUOTE_VERIFIERS = new Set(['anchor', 'native_copy', 'quoted_card'])
@@ -1076,6 +1082,7 @@ export class WechatAutoReplyStore {
     this.statUid = options.statUid ?? defaultStatUid
     this.verifyOperatorBinding = options.verifyOperatorBinding ?? true
     this.verifyEvidenceFiles = options.verifyEvidenceFiles ?? true
+    this.dispatchEnabled = options.dispatchEnabled === true
     this.cooperativeShutdownMs = assertOptionalBoundedInt(
       options.cooperativeShutdownMs,
       80,
@@ -1139,18 +1146,12 @@ export class WechatAutoReplyStore {
         claimed_at INTEGER,
         lease_expires_at INTEGER,
         batch_expires_at INTEGER,
-        decided_at INTEGER
+        decided_at INTEGER,
+        send_deadline_at INTEGER,
+        send_evidence_at INTEGER
       );
       CREATE INDEX IF NOT EXISTS idx_autoreply_tasks_state ON autoreply_tasks(state, lease_expires_at);
       CREATE INDEX IF NOT EXISTS idx_autoreply_task_claims ON autoreply_tasks(conversation_key, claimed_at);
-      CREATE TABLE IF NOT EXISTS group_cooldowns (
-        conversation_key TEXT PRIMARY KEY,
-        last_task_id TEXT NOT NULL,
-        last_batch_id TEXT NOT NULL,
-        last_claimed_at INTEGER NOT NULL,
-        cooldown_until INTEGER NOT NULL,
-        policy_version INTEGER NOT NULL
-      );
       CREATE TABLE IF NOT EXISTS autoreply_runtime_flags (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
@@ -1186,6 +1187,17 @@ export class WechatAutoReplyStore {
     if (!auditCols.has('provider_run_id')) {
       this.db.exec('ALTER TABLE autoreply_audit ADD COLUMN provider_run_id TEXT')
     }
+    const taskCols = new Set(this.db.prepare('PRAGMA table_info(autoreply_tasks)').all().map(col => col.name))
+    for (const column of ['send_deadline_at', 'send_evidence_at']) {
+      if (!taskCols.has(column)) this.db.exec(`ALTER TABLE autoreply_tasks ADD COLUMN ${column} INTEGER`)
+    }
+    // Legacy dispatch outcomes did not record the frozen job deadline. Bound
+    // their exposure by the old draft lifetime plus the maximum outbox lease.
+    this.db.prepare(`
+      UPDATE autoreply_tasks SET send_deadline_at=MIN(COALESCE(batch_expires_at, decided_at + ?), decided_at + ?)
+      WHERE send_action IN ('queued', 'needs_review') AND send_deadline_at IS NULL
+    `).run(AUTOMATIC_DRAFT_LIFETIME_MS + AUTOMATIC_SEND_JOB_MS, AUTOMATIC_DRAFT_LIFETIME_MS + AUTOMATIC_SEND_JOB_MS)
+    this.db.exec('CREATE INDEX IF NOT EXISTS idx_autoreply_send_quota ON autoreply_tasks(conversation_key, send_action)')
     this.recoverInterruptedClaims(this.clock())
   }
 
@@ -1644,6 +1656,23 @@ export class WechatAutoReplyStore {
           frozenTarget: null,
           contextTailFingerprint,
           reason: 'account_binding_changed',
+          batchExpiresAt: null,
+        },
+      }
+    }
+    const reviewEvent = events.find(event => event.needsReview || event.triggerType === 'needs_human')
+    if (reviewEvent) {
+      return {
+        ok: false,
+        block: {
+          channel,
+          requestedMode,
+          state: 'needs_review',
+          eligibilityDecision: 'needs_review',
+          frozenTarget,
+          contextTailFingerprint,
+          reason: /^[a-z][a-z0-9_]{0,79}$/.test(reviewEvent.reason ?? '')
+            ? `desktop_review:${reviewEvent.reason}` : 'desktop_review',
           batchExpiresAt: null,
         },
       }
@@ -2286,15 +2315,15 @@ export class WechatAutoReplyStore {
       }
       const taskId = randomBytes(12).toString('hex')
       if (channel === 'group') {
-        const cooldownSeconds = convRule.cooldownSeconds ?? cfg.groupCooldownSeconds
-        const windowMs = cooldownSeconds * 1000
-        const limited = convRule.maxRepliesPerWindow === 2
-          ? this.db.prepare(`
-            SELECT 1 FROM autoreply_tasks WHERE conversation_key=? AND claimed_at>? LIMIT 1 OFFSET 1
-          `).get(batch.conversation_key, nowMs - windowMs)
-          : this.db.prepare('SELECT 1 FROM group_cooldowns WHERE conversation_key=? AND cooldown_until>?')
-            .get(batch.conversation_key, nowMs)
-        if (limited) {
+        const windowMs = (convRule.cooldownSeconds ?? cfg.groupCooldownSeconds) * 1000
+        const sendCap = convRule.maxRepliesPerWindow ?? 1
+        const sending = this.dispatchEnabled && requestedMode === 'unattended'
+        const attemptCap = sending ? 2 * sendCap : sendCap
+        const attemptsExhausted = this.db.prepare(`
+          SELECT 1 FROM autoreply_tasks WHERE conversation_key=? AND claimed_at>? LIMIT 1 OFFSET ?
+        `).get(batch.conversation_key, nowMs - windowMs, attemptCap - 1)
+        const sendsExhausted = sending && this.groupSendQuotaFull(batch.conversation_key, convRule, nowMs)
+        if (attemptsExhausted || sendsExhausted) {
           const rec = this.insertTaskRowLocked({
             batchId: batch.batch_id,
             taskId,
@@ -2311,7 +2340,7 @@ export class WechatAutoReplyStore {
             contextTailFingerprint,
             providerRunId: null,
             draftText: null,
-            reason: 'group_cooldown_active',
+            reason: sendsExhausted ? 'group_send_limit' : 'group_model_attempt_limit',
             claimedAt: null,
             leaseExpiresAt: null,
             batchExpiresAt,
@@ -2320,17 +2349,6 @@ export class WechatAutoReplyStore {
           this.db.exec('COMMIT')
           return { acquired: false, record: rec }
         }
-        const cooldownUntil = nowMs + windowMs
-        this.db.prepare(`
-          INSERT INTO group_cooldowns(conversation_key, last_task_id, last_batch_id, last_claimed_at, cooldown_until, policy_version)
-          VALUES(?, ?, ?, ?, ?, ?)
-          ON CONFLICT(conversation_key) DO UPDATE SET
-            last_task_id=excluded.last_task_id,
-            last_batch_id=excluded.last_batch_id,
-            last_claimed_at=excluded.last_claimed_at,
-            cooldown_until=excluded.cooldown_until,
-            policy_version=excluded.policy_version
-        `).run(batch.conversation_key, taskId, batch.batch_id, nowMs, cooldownUntil, cfg.policyVersion)
       }
 
       const leaseExpiresAt = nowMs + cfg.claimLeaseSeconds * 1000
@@ -2360,6 +2378,124 @@ export class WechatAutoReplyStore {
       return { acquired: true, record: rec }
     } catch (error) {
       try { this.db.exec('ROLLBACK') } catch { /* Already rolled back. */ }
+      throw error
+    }
+  }
+
+  /** @private */
+  groupSendQuotaFull(conversationKey, rule, nowMs) {
+    const cutoff = nowMs - (rule.cooldownSeconds ?? this.autoReplyPolicy.groupCooldownSeconds) * 1000
+    const cap = rule.maxRepliesPerWindow ?? 1
+    return Boolean(this.db.prepare(`
+      SELECT 1 FROM autoreply_tasks WHERE conversation_key=? AND (
+        (send_action='sent_verified' AND send_evidence_at>?)
+        OR (send_action IN ('reserved', 'queued', 'needs_review')
+          AND MAX(COALESCE(send_deadline_at, 0), COALESCE(send_evidence_at, 0))>?)
+      ) LIMIT 1 OFFSET ?
+    `).get(conversationKey, cutoff, cutoff, cap - 1))
+  }
+
+  /** @private */
+  recordSendOutcomeLocked(row, state, action, reason, nowMs, evidenceAt = null) {
+    this.db.prepare(`
+      UPDATE autoreply_tasks SET state=?, send_action=?, reason=?, decided_at=?, send_evidence_at=? WHERE task_id=?
+    `).run(state, action, reason, nowMs, evidenceAt, row.task_id)
+    this.db.prepare(`
+      INSERT INTO autoreply_audit(batch_id, task_id, from_state, to_state, reason, provider_run_id, recorded_at)
+      VALUES(?, ?, ?, ?, ?, ?, ?)
+    `).run(row.batch_id, row.task_id, row.state, state, reason, row.provider_run_id, nowMs)
+    return hydrateTaskRow(this.db.prepare('SELECT * FROM autoreply_tasks WHERE task_id=?').get(row.task_id), false)
+  }
+
+  /** @private */
+  reserveAutomaticSend(taskId, nowMs, rejection = null) {
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      const row = this.db.prepare(`
+        SELECT * FROM autoreply_tasks WHERE task_id=? AND requested_mode='unattended'
+          AND state='draft_ready' AND send_action='none'
+      `).get(taskId)
+      let outcome = null
+      if (row) {
+        const rule = this.autoReplyPolicy.conversations[row.conversation_key]
+        const dispatchBy = row.decided_at + AUTOMATIC_DRAFT_LIFETIME_MS
+        const deadline = Math.min(row.batch_expires_at ?? 0, dispatchBy + AUTOMATIC_SEND_JOB_MS)
+        const reason = rejection ?? (rule?.mode !== 'unattended' ? 'conversation_mode_changed' : null)
+          ?? (Math.min(deadline, dispatchBy) <= nowMs ? 'automatic_draft_expired' : null)
+        if (reason) {
+          outcome = this.recordSendOutcomeLocked(row, 'needs_review', 'not_sent', reason, nowMs)
+        } else if (row.channel === 'group' && this.groupSendQuotaFull(row.conversation_key, rule, nowMs)) {
+          outcome = this.recordSendOutcomeLocked(row, 'notice_only', 'not_sent', 'group_send_limit', nowMs)
+        } else {
+          this.db.prepare("UPDATE autoreply_tasks SET send_action='reserved', send_deadline_at=? WHERE task_id=?")
+            .run(deadline, taskId)
+          outcome = hydrateTaskRow(this.db.prepare('SELECT * FROM autoreply_tasks WHERE task_id=?').get(taskId), false)
+        }
+      }
+      this.db.exec('COMMIT')
+      return outcome
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  /** @private */
+  finishAutomaticDispatch(taskId, action, nowMs, deadlineAt = null) {
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      const row = this.db.prepare("SELECT * FROM autoreply_tasks WHERE task_id=? AND send_action='reserved'").get(taskId)
+      let outcome = null
+      if (row && action === 'queued') {
+        this.db.prepare("UPDATE autoreply_tasks SET send_action='queued', send_deadline_at=COALESCE(?, send_deadline_at) WHERE task_id=?")
+          .run(Number.isSafeInteger(deadlineAt) && deadlineAt > row.decided_at ? deadlineAt : null, taskId)
+      } else if (row) {
+        const reason = action === 'not_sent' ? 'automatic_dispatch_refused' : 'automatic_dispatch_result_unknown'
+        outcome = this.recordSendOutcomeLocked(row, 'needs_review', action, reason, nowMs,
+          action === 'needs_review' ? nowMs : null)
+      }
+      this.db.exec('COMMIT')
+      return outcome
+    } catch (error) {
+      this.db.exec('ROLLBACK')
+      throw error
+    }
+  }
+
+  /** Settle a terminal result verified against the pinned worker receipt, outbox and operation. */
+  settleAutomaticReceipt(receipt) {
+    if (this._closed || !this.db.isOpen) return null
+    this.db.exec('BEGIN IMMEDIATE')
+    try {
+      const row = this.db.prepare('SELECT * FROM autoreply_tasks WHERE task_id=?').get(receipt.taskId)
+      const target = row?.frozen_target ? JSON.parse(row.frozen_target) : null
+      let outcome = null
+      if (row && row.requested_mode === 'unattended' && row.draft_text && target
+        && row.batch_id === receipt.batchId && row.policy_version === receipt.policyVersion
+        && row.conversation_key === receipt.conversationKey && target.accountSha256 === receipt.accountSha256
+        && target.targetProof === receipt.targetProof && digest(row.draft_text) === receipt.textSha256
+        && row.send_action !== 'sent_verified') {
+        const receiptReason = ['worker_receipt', receipt.state, receipt.reason].filter(Boolean).join(':')
+        if (receipt.state === 'sent_verified') {
+          outcome = this.recordSendOutcomeLocked(row, 'sent_verified', 'sent_verified', receiptReason,
+            receipt.observedAt, receipt.verifiedAt ?? receipt.observedAt)
+        } else if (DEFINITELY_NOT_SENT_RECEIPTS.has(receipt.state) && row.reason !== receiptReason) {
+          outcome = this.recordSendOutcomeLocked(row, 'not_sent', 'not_sent', receiptReason, receipt.observedAt)
+        } else if (receipt.state === 'needs_review') {
+          if (receipt.submissionProvenAbsent && (row.send_action !== 'not_sent' || row.reason !== receiptReason)) {
+            outcome = this.recordSendOutcomeLocked(row, 'needs_review', 'not_sent', receiptReason, receipt.observedAt)
+          } else if (!receipt.submissionProvenAbsent && !row.reason?.startsWith('worker_receipt:')) {
+            // Start an unknown hold only on its first authoritative observation.
+            this.db.prepare('UPDATE autoreply_tasks SET send_deadline_at=? WHERE task_id=?').run(receipt.deadlineAt, row.task_id)
+            outcome = this.recordSendOutcomeLocked(row, 'needs_review', 'needs_review', receiptReason,
+              receipt.observedAt, receipt.observedAt)
+          }
+        }
+      }
+      this.db.exec('COMMIT')
+      return outcome
+    } catch (error) {
+      this.db.exec('ROLLBACK')
       throw error
     }
   }
@@ -2623,7 +2759,6 @@ export class WechatAutoReplyStore {
     atomicJson(targetPath, {
       schemaVersion: WECHAT_AUTOREPLY_SCHEMA_VERSION,
       ...record,
-      sendAction: 'none',
     }, 0o600)
     return targetPath
   }
@@ -2632,7 +2767,7 @@ export class WechatAutoReplyStore {
    * Project one non-sending human/review/draft assessment into the existing trusted `handoffDir`
    * owner-notice pipeline at most once per task/batch when explicitly opted in.
    * Commits a crash-recoverable `'pending'` row before writing `handoffDir`, marks `'written'`
-   * upon atomic delivery, preserves `sendAction: 'none'`, emits no debug metadata, and never replays `'unknown'` notices.
+   * upon atomic delivery and never replays `'unknown'` notices.
    */
   projectOutcomeOwnerNotice(record, options = {}) {
     if (this._closed || !this.db.isOpen) {
@@ -2642,7 +2777,7 @@ export class WechatAutoReplyStore {
     if (!notifCfg.enabled || options.projectOwnerNotices !== true) {
       return null
     }
-    const rateLimited = record?.state === 'notice_only' && record.reason === 'group_cooldown_active'
+    const rateLimited = record?.state === 'notice_only' && GROUP_LIMIT_REASONS.has(record.reason)
     if (!record || (!rateLimited && record.state !== 'draft_ready' && record.state !== 'needs_human' && record.state !== 'needs_review')) {
       return null
     }
@@ -2813,6 +2948,13 @@ const OWNER_REASON_LABELS = Object.freeze({
   account_binding_changed: '当前微信账号绑定发生变化，已阻断自动回复',
   target_binding_changed_or_missing: '目标联系人身份证明已变更或缺失，已阻断自动回复',
   unverified_source_proof: '入站事件来源证明不完整，已阻断自动回复',
+  desktop_review: '微信桌面端标记了需人工核查的消息',
+  'desktop_review:group_cursor_scroll_gap_ambiguous': '群聊历史有断层，需核对消息的新旧',
+  'desktop_review:plain_space_mention_not_triggered': '已读到提及文字，尚无法确认微信原生 @',
+  automatic_source_missing: '找不到可核验的原消息，已停止发送',
+  automatic_draft_expired: '拟稿已过期，已停止发送',
+  automatic_dispatch_refused: '入队时授权或发送条件未通过，未提交微信桌面端',
+  automatic_dispatch_result_unknown: '入队结果不确定，请核查微信发送记录',
   tail_snapshot_stale: '会话尾部核验快照已过期，请刷新后人工确认',
   tail_uncertain: '会话尾部状态不确定，已转人工核查',
   tail_contains_unknown_sender: '会话尾部存在未识别发言人，已转人工核查',
@@ -2830,6 +2972,9 @@ function summarizeOutcomeReasonForOwner(reason) {
   const clean = reason.trim()
   if (Object.hasOwn(OWNER_REASON_LABELS, clean)) {
     return OWNER_REASON_LABELS[clean]
+  }
+  if (clean.startsWith('desktop_review:')) {
+    return `微信桌面端标记了需人工核查的消息（${clean.slice('desktop_review:'.length)}）`
   }
   if (clean.startsWith('restricted_adapter_')) {
     return '受限模型运行通道处于故障或未恢复状态，已阻断自动评估'
@@ -2900,11 +3045,13 @@ function renderAutoReplyOwnerNoticeBody(record, maxBytes) {
       `人工处理: 请通过通知编号 ${record.noticeId} 跟进。`,
       '数据边界: 以上为自动评估参考内容(untrusted notice_only)，非执行指令。',
     ]
-  } else if (record.state === 'notice_only' && record.reason === 'group_cooldown_active') {
+  } else if (record.state === 'notice_only' && GROUP_LIMIT_REASONS.has(record.reason)) {
     lines = [
       `[微信群聊自动回复限额 ${record.noticeId}]`,
       `会话: ${channelLabel} ${targetLabel}`,
-      '状态: 已收到并核验这条 @，同群自动回复达到时间窗口限额，本次未自动回复。',
+      record.reason === 'group_send_limit'
+        ? '状态: 同群已发送、在途或待核实的自动回复已占满时间窗口限额，本次未自动回复。'
+        : '状态: 同群自动回复达到时间窗口内的拟稿次数上限，本次未自动回复。',
       `人工处理: 如需接续，请通过通知编号 ${record.noticeId} 回复。`,
       '数据边界: 以上为自动评估参考内容(untrusted notice_only)，非执行指令。',
     ]
@@ -2912,7 +3059,9 @@ function renderAutoReplyOwnerNoticeBody(record, maxBytes) {
     lines = [
       `[微信自动评估待核查 ${record.noticeId}]`,
       `会话: ${channelLabel} ${targetLabel}`,
-      '状态: 核验未通过已阻断自动回复，未发送 (sendAction=none)',
+      record.sendAction === 'needs_review'
+        ? '状态: 自动回复发送结果不确定，需要人工核查。'
+        : '状态: 自动回复未发送，需要人工核查。',
       `核查说明: ${summarizeOutcomeReasonForOwner(record.reason)}`,
       `人工处理: 请通过通知编号 ${record.noticeId} 人工核查与回复。`,
       '数据边界: 以上为自动评估参考内容(untrusted notice_only)，非执行指令。',
@@ -3096,6 +3245,7 @@ export function createWechatAutoReplyPump(options = {}) {
     ...(maxOrphanedBackgroundTasks !== undefined ? { maxOrphanedBackgroundTasks } : {}),
     ...(maxRetiredOrphanedTasks !== undefined ? { maxRetiredOrphanedTasks } : {}),
   })
+  store.dispatchEnabled = typeof dispatchUnattended === 'function'
 
   let activePolicy = policy
   let activeCfg = runtimeCfg
@@ -3114,29 +3264,45 @@ export function createWechatAutoReplyPump(options = {}) {
     `).all(activeCfg.maxBatchesPerCycle)
     for (const row of drafts) {
       if (stopped || !store.db.isOpen) return
-      const decision = hydrateTaskRow(row, false)
-      let sendAction = 'needs_review'
+      let event = null
+      let source = null
       try {
         const { events } = readVerifiedInboxBatch(activePolicy, row.batch_id, {
           contextLimit: 0, statUid,
         })
-        const event = events.at(-1)
-        const source = desktopReplyOrigin(event)
-        if (source && decision.policyVersion === activeCfg.policyVersion
-          && row.decided_at + 60_000 > clock() && !store.isRuntimeGlobalPaused()) {
-          if (await dispatchUnattended({ decision, source, sourceText: event.text, policy: activePolicy, clock })) {
-            sendAction = 'queued'
-          }
-        }
+        event = events.at(-1)
+        source = desktopReplyOrigin(event)
       } catch (err) {
-        reportSafeError('Automatic reply dispatch requires review', err)
+        reportSafeError('Automatic reply source requires review', err)
       }
       if (!store.db.isOpen) return
-      store.db.prepare("UPDATE autoreply_tasks SET send_action=? WHERE task_id=? AND send_action='none'").run(sendAction, row.task_id)
-      if (sendAction === 'needs_review' && activeCfg.projectOwnerNotices === true) {
-        store.projectOutcomeOwnerNotice({
-          ...decision, state: 'needs_review', reason: 'automatic_dispatch_requires_review', draftText: null,
-        }, { projectOwnerNotices: true })
+      const nowMs = clock()
+      let rejection = null
+      if (!source) rejection = 'automatic_source_missing'
+      else if (row.policy_version !== activeCfg.policyVersion) rejection = 'policy_version_changed'
+      else if (store.isRuntimeGlobalPaused()) rejection = 'global_paused'
+      const reserved = store.reserveAutomaticSend(row.task_id, nowMs, rejection)
+      if (!reserved) continue
+      let outcome = reserved
+      if (reserved.sendAction === 'reserved') {
+        let action = 'needs_review'
+        let deadlineAt = null
+        try {
+          const result = await dispatchUnattended({
+            decision: reserved, source, sourceText: event.text, policy: activePolicy, clock,
+            dispatchBy: row.decided_at + AUTOMATIC_DRAFT_LIFETIME_MS,
+          })
+          if (result === false) action = 'not_sent'
+          else if (result === true || Number.isSafeInteger(result?.deadlineAt)) action = 'queued'
+          deadlineAt = result?.deadlineAt ?? null
+        } catch (err) {
+          reportSafeError('Automatic reply dispatch requires review', err)
+        }
+        if (!store.db.isOpen) return
+        outcome = store.finishAutomaticDispatch(row.task_id, action, clock(), deadlineAt)
+      }
+      if (outcome && activeCfg.projectOwnerNotices === true) {
+        store.projectOutcomeOwnerNotice(outcome, { projectOwnerNotices: true })
       }
     }
   }

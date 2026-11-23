@@ -40,12 +40,29 @@ export interface SealedInboundBatchSummary {
   readonly replyEligible: boolean
 }
 
+export interface VerifiedAutomaticWechatReceipt {
+  readonly taskId: string
+  readonly batchId: string
+  readonly policyVersion: number
+  readonly conversationKey: string
+  readonly targetProof: string
+  readonly accountSha256: string
+  readonly textSha256: string
+  readonly observedAt: number
+  readonly verifiedAt: number | null
+  readonly deadlineAt: number
+  readonly state: 'sent_verified' | 'needs_review' | 'failed_before_submit' | 'refused' | 'expired' | 'auth_required'
+  readonly reason: string | null
+  readonly submissionProvenAbsent: boolean
+}
+
 export class WechatExchangeProjector {
   constructor(
     policy: Record<string, unknown>,
     options?: {
       readonly clock?: (() => number) | undefined
       readonly statUid?: ((stat: { readonly uid: number }, path: string) => number) | undefined
+      readonly onVerifiedAutomaticReceipt?: ((receipt: VerifiedAutomaticWechatReceipt) => void) | undefined
     },
   )
   isEnabled(): boolean

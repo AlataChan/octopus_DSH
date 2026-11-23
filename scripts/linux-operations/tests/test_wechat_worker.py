@@ -118,6 +118,81 @@ class WorkerTests(unittest.TestCase):
         self.assertEqual(self.run_job(path)['state'], 'needs_review')
         self.assertEqual(Desktop.submissions, [])
 
+    def test_expired_chat_recovery_clears_owned_marker_under_shared_lock_without_sending(self):
+        path = self.job()
+        job = json.loads(path.read_text())
+        surface = {'draft': '', 'clipboard': '', 'deletions': 0}
+
+        class CutPower(BaseException):
+            pass
+
+        class NativeChatFixture(DirectDesktop):
+            def __init__(self, config):
+                super().__init__(config, runner=self.run_action)
+
+            def identity(self):
+                return worker.sha(self.config['account_id'])
+
+            def _open_recipient(self, recipient):
+                if recipient != self.config['recipient_id']:
+                    raise UiUnavailable('recipient_mismatch')
+
+            def _composer(self):
+                return {'id': 'chat', 'box': (0, 0, 1280, 900)}, (450, 690, 120, 20), 660
+
+            def _click_box(self, window, box, *, button='1', hold=False):
+                pass
+
+            def clipboard_set(self, text):
+                surface['clipboard'] = text
+
+            def clipboard_get(self):
+                return surface['clipboard']
+
+            def run_action(self, *args):
+                if args == ('xdotool', 'key', 'ctrl+v'):
+                    surface['draft'] = surface['clipboard']
+                elif args == ('xdotool', 'key', 'ctrl+c'):
+                    surface['clipboard'] = surface['draft']
+                elif args == ('xdotool', 'key', 'BackSpace'):
+                    surface['deletions'] += 1
+                    surface['draft'] = ''
+
+            def preflight(self):
+                raise CutPower()
+
+            def submit(self):
+                raise AssertionError('cleanup path must never submit')
+
+        def process(clock):
+            return worker.process_job(
+                path, self.root, self.config, Queue, run_one, NativeChatFixture,
+                trusted_uid=os.getuid(), clock=clock,
+            )
+
+        with self.assertRaises(CutPower):
+            process(lambda: (job['created_at'] + 1) / 1000)
+        receipt_path = self.root / 'adhoc' / 'receipts' / path.name
+        receipt = worker.document(receipt_path)
+        self.assertEqual(receipt['state'], 'prepared')
+        self.assertIn(receipt['draft_provenance']['token'], surface['draft'])
+        def expired():
+            return (job['expires_at'] + 1) / 1000
+
+        receipt_path.chmod(0o640)
+        self.assertEqual(process(expired)['reason'], 'chat_draft_receipt_unverified')
+        self.assertEqual(surface['deletions'], 0)
+        receipt_path.chmod(0o600)
+        with Queue(self.root / 'outbox', self.root / 'receipts').lock(job['account_sha256']):
+            self.assertEqual(process(expired), {'state': 'busy'})
+            self.assertEqual(surface['deletions'], 0)
+        result = process(expired)
+        self.assertEqual(result['state'], 'expired')
+        self.assertEqual(result['draft_cleanup'], 'cleared')
+        self.assertEqual(surface['draft'], '')
+        self.assertEqual(surface['deletions'], 1)
+        self.assertEqual(process(expired), result)
+
     def test_shared_account_lock_blocks_another_ui_owner(self):
         path = self.job()
         queue = Queue(self.root / 'outbox', self.root / 'receipts')
@@ -1488,6 +1563,8 @@ class GroupAndAdhocMomentsTests(unittest.TestCase):
                     inner_self._draft = inner_self._clip
                 elif args[:2] == ('xdotool', 'key') and args[2] == 'ctrl+c':
                     inner_self._clip = inner_self._draft
+                elif args[:2] == ('xdotool', 'key') and args[2] == 'BackSpace':
+                    inner_self._draft = ''
                 return ''
 
             def visual_box(inner_self, window, name):
@@ -1896,8 +1973,97 @@ class GroupAndAdhocMomentsTests(unittest.TestCase):
             trusted_uid=os.getuid(), config_path=self.config_path, contacts_path=self.contacts_path,
             group_desktop_class=PreSubmitAnchorTamperDesktop,
         )
-        self.assertEqual(tamper_res['state'], 'failed_before_submit')
-        self.assertEqual(tamper_res['reason'], 'binding_digest_mismatch')
+        self.assertEqual(tamper_res['state'], 'needs_review')
+        self.assertEqual(tamper_res['reason'], 'chat_draft_cleanup_unverified')
+        self.assertEqual(tamper_res['before_submit_reason'], 'binding_digest_mismatch')
+        self.assertIs(tamper_res['submission_attempted'], False)
+
+    def test_group_auto_reply_checks_final_native_text_with_real_tail_verifier(self):
+        from unittest.mock import patch
+
+        from gamma_cn.moments.group_inbound import GroupInboundCursor, group_history_fingerprint
+        from gamma_cn.moments.inbound_scanner import _group_cursor_identity
+        from gamma_cn.moments.inbox import AccountBindingProof, InboxStore, InboundObservation
+
+        now = int(time.time() * 1000)
+        task_id = '4e' * 12
+        body = '500放量下行，日线方向仍偏弱。'
+        path = self._group_job(task_id, text=body, created_at=now)
+        job = json.loads(path.read_text())
+        cfg, _ = worker.resolve_job_contact(
+            job, self.config, root=self.root, contacts_path=self.contacts_path, trusted_uid=os.getuid(),
+        )
+        target_key = f"group:{job['contact_id']}"
+        target = worker.VerifiedScanTarget(
+            kind='group', target_id=job['contact_id'], target_key=target_key,
+            account_sha256=job['account_sha256'], binding_sha256=job['binding_sha256'],
+            display_name=job['group_name'], effective_config=cfg,
+        )
+        manual_view = self._write_manual_reply_view()
+        worker.save(manual_view.with_name('octopus-auto-reply.json'), {
+            'schema_version': 1, 'account_sha256': job['account_sha256'], 'policy_version': 7,
+            'enabled': True, 'paused': False, 'lease_expires_at': now + 10000,
+            'conversations': {target_key: 'unattended'},
+        })
+
+        png_tools = self.np.array(self.Image.open(self.assets / 'chat-tools.png').convert('RGB'))
+        png_send = self.np.array(self.Image.open(self.assets / 'chat-send.png').convert('RGB'))
+        fixture_class = self._make_group_desktop_cls()
+
+        class GroupFrame(fixture_class):
+            def visual_box(inner_self, window, name):
+                if name == 'chat-send':
+                    return (1100, 860, 20, 20)
+                return super().visual_box(window, name)
+
+            def capture(inner_self, window):
+                pixels, rows = super().capture(window)
+                if window['box'][2] == 1280:
+                    pixels[760:780, 420:440] = png_tools
+                    pixels[860:880, 1100:1120] = png_send
+                    pixels[500:536, 460:640] = (237, 237, 237)
+                return pixels, rows
+
+        scan_fixture = GroupFrame(cfg)
+        frame, _ = scan_fixture.capture(scan_fixture.window('微信'))
+        seen_text = '@研究助理\u2005500怎么看'
+        (self.root / 'receipts').chmod(0o700)
+        observed = InboxStore(self.root).record_observation(
+            InboundObservation(
+                trigger_type='group_message', conversation_kind='group', conversation_ref=target.target_id,
+                sender_name='群友', sender_ref='enrolled-author', source_ref='grp_test_mention',
+                observed_at=now - 1000, text=seen_text, account_sha256=target.account_sha256,
+                binding_proof=AccountBindingProof(target.account_sha256, 'group', target.target_id, target.binding_sha256),
+                evidence_crop=frame[500:536, 460:640],
+                source_proof={'author': 'native_copy', 'latest': True,
+                              'trigger': 'mention_self', 'trigger_verifier': 'registered_sender'},
+            ), clock_ms=now,
+        )
+        payload = observed.payload
+        cursor_path, metadata, _ = _group_cursor_identity(target, self.root)
+        cursor_path.parent.mkdir(mode=0o700)
+        cursor = GroupInboundCursor(
+            group_id=job['group_id'], tail_source_refs=(payload['source_ref'],),
+            latest_visible={'source_ref': payload['source_ref'], 'history_left': 420, 'history_bottom': 655,
+                            'viewport_sha256': group_history_fingerprint(frame, 420, 655)},
+        )
+        worker.save(cursor_path, {**metadata, 'cursor': cursor.to_dict()})
+        job.update(
+            auto_reply_task_id=task_id, auto_reply_policy_version=7, confirmation_request_id=f'wechat-auto:{task_id}',
+            auto_reply_source={'source_ref': payload['source_ref'], 'text_sha256': worker.sha(payload['text']),
+                               'evidence_sha256': payload['evidence_sha256'], 'observed_at': payload['observed_at']},
+        )
+        path.write_text(json.dumps(job), encoding='utf-8')
+
+        with patch('gamma_cn.moments.group.time.sleep', lambda _: None):
+            result = worker.process_job(
+                path, self.root, self.config, Queue, run_one, Desktop, clock=lambda: now / 1000,
+                trusted_uid=os.getuid(), config_path=self.config_path, contacts_path=self.contacts_path,
+                group_desktop_class=GroupFrame, manual_reply_path=manual_view,
+            )
+        self.assertEqual(result['state'], 'sent_verified', result)
+        self.assertEqual(result['proof']['text_sha256'], worker.sha(body))
+        self.assertEqual(GroupFrame.submits, 1)
 
     def test_real_adhoc_moments_desktop_limits_visibility_and_independent_evidence(self):
         feed = [{'text': '历史动态：保留基线参考。', 'own': True, 'visibility': 'friends', 'time': '2小时前', 'tag': 'old-1'}]
@@ -2355,8 +2521,9 @@ console.log(JSON.stringify({{ rProbe, rGrp, rMom }}));
                 trusted_uid=os.getuid(), config_path=self.config_path, contacts_path=self.contacts_path,
                 group_desktop_class=OriginTamperDesktop,
             )
-            self.assertEqual(tamper_res['state'], 'failed_before_submit')
-            self.assertEqual(tamper_res['reason'], 'binding_changed_before_submit')
+            self.assertEqual(tamper_res['state'], 'needs_review')
+            self.assertEqual(tamper_res['reason'], 'chat_draft_cleanup_unverified')
+            self.assertEqual(tamper_res['before_submit_reason'], 'binding_changed_before_submit')
             self.assertEqual(OriginTamperDesktop.submits, submits_before)
 
             # 4. Crash after submit produces needs_review and NEVER replays on retry.

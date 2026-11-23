@@ -49,7 +49,9 @@ import {
   validateRestrictedProfileOutput,
 } from '../wechat-autoreply.mjs'
 
-function setupAutoReplyFixture(t, { manualReplyPaused = false, manualReplyLease = null, operatorRevoked = false } = {}) {
+function setupAutoReplyFixture(t, {
+  manualReplyPaused = false, manualReplyLease = null, operatorRevoked = false, notifyOnReceiptStates,
+} = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'octopus-autoreply-')))
   chmodSync(root, 0o750)
   const wechatRoot = join(root, 'wechat')
@@ -246,6 +248,7 @@ function setupAutoReplyFixture(t, { manualReplyPaused = false, manualReplyLease 
       maxContextMessages: 20,
       retentionDays: 14,
       maxNoticeBytes: 2048,
+      ...(notifyOnReceiptStates ? { notifyOnReceiptStates } : {}),
     },
     limits: { logLines: 50, previewSeconds: 600, workerPollSeconds: 2, maxTextBytes: 1000, commandSeconds: 30 },
   }
@@ -622,6 +625,152 @@ test('a native group mention keeps the original digest and removes the addressed
   assert.equal(outcome.draftText, '您好，请讲。')
 })
 
+test('installed group dispatch settles trusted worker receipts independently of Feishu filters and releases pre-submit cleanup review', async t => {
+  const f = setupAutoReplyFixture(t, { notifyOnReceiptStates: ['published_verified', 'needs_review'] })
+  const policyPath = join(f.root, 'operations.json')
+  const database = join(f.stateDir, 'wechat-autoreply.sqlite')
+  const outbox = join(f.wechatRoot, 'adhoc', 'outbox')
+  const receipts = join(f.wechatRoot, 'adhoc', 'receipts')
+  const conversationKey = 'group:ops_group'
+  writeFileSync(policyPath, JSON.stringify({
+    ...f.policy,
+    wechatNotifications: { ...f.policy.wechatNotifications, projectionIntervalSeconds: 1 },
+    wechatAutoReply: {
+      enabled: true, policyVersion: 3, transport: { mode: 'adapter' }, pumpIntervalSeconds: 1,
+      conversations: { [conversationKey]: { mode: 'unattended', cooldownSeconds: 300, maxRepliesPerWindow: 2 } },
+    },
+  }))
+
+  const evidence = f.writeEvidence('native-group-receipts.png')
+  const seal = (number, extra = {}) => {
+    const { sealed: [batch] } = f.sealEvents([{
+      schema_version: 1, event_id: `evt-native-group-receipt-${number}`,
+      account_sha256: f.accountSha, trigger_type: 'group_message',
+      conversation_kind: 'group', conversation_ref: 'ops_group', binding_sha256: f.proofOf('ops_group'),
+      sender_name: '值班群成员', sender_ref: 'verified-member', source_ref: `group-receipt-seq-${number}`,
+      source_time: '13:15', observed_at: f.now(), text: `@观察者Gamma\u2005方便说话吗？${number}`,
+      evidence_path: evidence.relPath, evidence_sha256: evidence.sha256,
+      source_proof: { author: 'avatar_anchor', latest: true, trigger: 'mention_self', trigger_verifier: 'anchor' },
+      ...extra,
+    }])
+    return f.projector.getProjectedNotice(batch.noticeKey).source_ref
+  }
+  const readTask = batchId => {
+    if (!existsSync(database)) return undefined
+    const db = new DatabaseSync(database, { readOnly: true })
+    try {
+      return db.prepare('SELECT task_id, state, send_action, reason, send_evidence_at FROM autoreply_tasks WHERE batch_id=?').get(batchId)
+    } finally { db.close() }
+  }
+  const waitTask = async (batchId, condition) => {
+    const timeout = Date.now() + 5000
+    let task = readTask(batchId)
+    while (!condition(task) && Date.now() < timeout) {
+      await delay(20)
+      task = readTask(batchId)
+    }
+    assert.ok(condition(task), `${batchId}: ${JSON.stringify(task)}`)
+    return task
+  }
+  const receiptFor = (task, state, extra = {}) => {
+    const path = `${task.task_id}.json`
+    const job = JSON.parse(readFileSync(join(outbox, path)))
+    writeFileSync(join(receipts, path), JSON.stringify({
+      job_id: task.task_id, text_sha256: job.text_sha256, state, ...extra,
+    }), { mode: 0o600 })
+  }
+  let modelCalls = 0
+  const start = () => startBroker(policyPath, { clock: f.now, autoReplyAdapter: { async generate() {
+    modelCalls += 1
+    if (modelCalls === 1) throw new Error('temporary provider failure')
+    return { providerRunId: `native-group-receipt-run-${modelCalls}`, rawOutput: { decision: 'answer', answer: '您好，请讲。' } }
+  } } })
+
+  let server = start()
+  try {
+    await once(server, 'listening')
+    const historyReview = await waitTask(seal(0, {
+      binding_sha256: undefined, source_proof: undefined, needs_review: true, trigger_type: 'needs_human',
+      reason: 'group_cursor_scroll_gap_ambiguous',
+    }), row => row?.state === 'needs_review')
+    assert.equal(historyReview.reason, 'desktop_review:group_cursor_scroll_gap_ambiguous')
+    assert.equal(modelCalls, 0)
+
+    const failedGeneration = await waitTask(seal(1), row => row?.state === 'needs_review')
+    assert.match(failedGeneration.reason, /^generation_failed:/)
+    assert.equal(failedGeneration.send_action, 'none')
+
+    const failedJobBatch = seal(2)
+    const failedJob = await waitTask(failedJobBatch, row => row?.send_action === 'queued')
+    receiptFor(failedJob, 'needs_review', {
+      reason: 'chat_draft_cleanup_unverified', phase: 'preflight', submission_attempted: false,
+      before_submit_reason: 'auto_reply_tail_not_verified',
+    })
+    const released = await waitTask(failedJobBatch, row => row?.send_action === 'not_sent')
+    assert.equal(released.state, 'needs_review')
+    assert.equal(released.reason, 'worker_receipt:needs_review:chat_draft_cleanup_unverified')
+    const cleanupNotice = f.projector.getProjectedNotice(`receipt:${failedJob.task_id}:needs_review`)
+    assert.match(cleanupNotice.body, /未提交发送，草稿需要人工核查/)
+
+    const sentBatch = seal(3)
+    const sentJob = await waitTask(sentBatch, row => row?.send_action === 'queued')
+    receiptFor(sentJob, 'sent_verified', { text_sha256: digest('unrelated text') })
+    const rejectDeadline = Date.now() + 5000
+    while (!f.projector.listRejectedInputs().some(row => row.reason.includes('Automatic reply worker receipt')) && Date.now() < rejectDeadline) {
+      await delay(20)
+    }
+    assert.ok(f.projector.listRejectedInputs().some(row => row.reason.includes('Automatic reply worker receipt')))
+    assert.equal(readTask(sentBatch).send_action, 'queued')
+    f.advance(35_000)
+    const sentAt = f.now()
+    receiptFor(sentJob, 'sent_verified', { verified_at: new Date(sentAt).toISOString() })
+    const sent = await waitTask(sentBatch, row => row?.send_action === 'sent_verified')
+    assert.equal(sent.state, 'sent_verified')
+    assert.equal(sent.send_evidence_at, sentAt)
+
+    // A second queued reply holds a slot even before the worker publishes a receipt.
+    const unknownBatch = seal(4)
+    const unknownJob = await waitTask(unknownBatch, row => row?.send_action === 'queued')
+    const inFlightLimited = await waitTask(seal(5), row => row?.state === 'notice_only')
+    assert.equal(inFlightLimited.reason, 'group_send_limit')
+    receiptFor(unknownJob, 'needs_review', { reason: 'chat_draft_cleanup_unverified', phase: 'preflight' })
+    const uncertain = await waitTask(unknownBatch, row => row?.send_action === 'needs_review')
+    assert.equal(uncertain.state, 'needs_review')
+
+    await new Promise(resolve => server.close(resolve))
+    server = start()
+    await once(server, 'listening')
+    f.setNow(sentAt + 299_999 - 25_000)
+    const stillLimited = await waitTask(seal(6), row => row?.state === 'notice_only')
+    assert.equal(stillLimited.reason, 'group_send_limit')
+    assert.equal(modelCalls, 4)
+    assert.equal(readTask(unknownBatch).send_evidence_at, uncertain.send_evidence_at)
+    assert.equal(f.projector.getProjectedNotice(`receipt:${sentJob.task_id}:sent_verified`), null)
+
+    // At the exact rolling-window cutoff the verified send releases one slot.
+    f.setNow(sentAt + 300_000 - 25_000)
+    const afterWindowBatch = seal(7)
+    const afterWindow = await waitTask(afterWindowBatch, row => row?.send_action === 'queued')
+    assert.ok(existsSync(join(outbox, `${afterWindow.task_id}.json`)))
+    assert.equal(modelCalls, 5)
+
+    await new Promise(resolve => server.close(resolve))
+    const disabledPolicy = JSON.parse(readFileSync(policyPath))
+    delete disabledPolicy.wechatAutoReply
+    writeFileSync(policyPath, JSON.stringify(disabledPolicy))
+    receiptFor(afterWindow, 'refused', { job_id: undefined, text_sha256: undefined, reason: 'global_paused' })
+    receiptFor(unknownJob, 'failed_before_submit', { reason: 'auto_reply_tail_not_verified' })
+    server = start()
+    await once(server, 'listening')
+    const refused = await waitTask(afterWindowBatch, row => row?.send_action === 'not_sent')
+    assert.equal(refused.reason, 'worker_receipt:refused:global_paused')
+    const beforeSubmitFailure = await waitTask(unknownBatch, row => row?.state === 'not_sent')
+    assert.equal(beforeSubmitFailure.reason, 'worker_receipt:failed_before_submit:auto_reply_tail_not_verified')
+  } finally {
+    if (server.listening) await new Promise(resolve => server.close(resolve))
+  }
+})
+
 test('explicit friend/group author signals required in all modes, current tail snapshot required for unattended, and Codex repro 1 fails closed', async t => {
   const f = setupAutoReplyFixture(t)
   const disabledDefault = resolveAutoReplyPolicy()
@@ -990,7 +1139,7 @@ test('delayed provider past 60s lease (no external recovery) and mid-generation 
   assert.equal(closedRes.sendAction, 'none')
 })
 
-test('a group can allow two replies per rolling window and explains later rate limiting', async t => {
+test('a group can allow two draft-only model attempts per rolling window and explains later rate limiting', async t => {
   const f = setupAutoReplyFixture(t)
   const evidence = f.writeEvidence('group-window.png')
   const conv = 'group:ops_group'
@@ -1028,18 +1177,18 @@ test('a group can allow two replies per rolling window and explains later rate l
   assert.equal((await inquiry(2)()).state, 'draft_ready')
   const originalThird = inquiry(3)
   const limited = await originalThird()
-  assert.equal(limited.reason, 'group_cooldown_active')
+  assert.equal(limited.reason, 'group_model_attempt_limit')
   assert.equal(limited.state, 'notice_only')
   assert.equal(limited.sendAction, 'none')
   assert.equal(calls, 2)
   const projection = store.projectOutcomeOwnerNotice(limited, { projectOwnerNotices: true })
   const handoff = JSON.parse(readFileSync(join(f.policy.wechatNotifications.handoffDir, projection.handoffFile), 'utf8'))
-  assert.match(handoff.body, /已收到并核验这条 @，同群自动回复达到时间窗口限额/)
+  assert.match(handoff.body, /同群自动回复达到时间窗口内的拟稿次数上限/)
   assert.equal(store.projectOutcomeOwnerNotice(limited, { projectOwnerNotices: true }).duplicate, true)
 
   f.advance(226_000)
   assert.equal((await inquiry(4)()).state, 'draft_ready')
-  assert.equal((await originalThird()).reason, 'group_cooldown_active')
+  assert.equal((await originalThird()).reason, 'group_model_attempt_limit')
   assert.equal(calls, 3)
 })
 
@@ -1257,7 +1406,7 @@ test('group @self and quote-self proof requirements, @all notice-only, untrusted
   const states = [c1.state, c2.state].sort()
   assert.deepEqual(states, ['draft_ready', 'notice_only'])
   const blocked = c1.state === 'notice_only' ? c1 : c2
-  assert.equal(blocked.reason, 'group_cooldown_active')
+  assert.equal(blocked.reason, 'group_model_attempt_limit')
   assert.equal(adapterCalls, 1)
 
   // Independent friend draft_only still succeeds during group cooldown!
@@ -1302,7 +1451,7 @@ test('group @self and quote-self proof requirements, @all notice-only, untrusted
     adapter,
   })
   assert.equal(stillCooling.state, 'notice_only')
-  assert.equal(stillCooling.reason, 'group_cooldown_active')
+  assert.equal(stillCooling.reason, 'group_model_attempt_limit')
   assert.equal(adapterCalls, 2)
 
   f.advance(80_000)

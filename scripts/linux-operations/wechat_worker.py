@@ -748,17 +748,7 @@ def resolve_manual_reply_authorization(
 
 
 
-def resolve_auto_reply_authorization(
-    job,
-    config,
-    now_ms,
-    *,
-    root,
-    config_path=None,
-    contacts_path=None,
-    manual_reply_path=None,
-    trusted_uid=0,
-):
+def _validate_auto_reply_origin(job):
     task_id = job['auto_reply_task_id']
     if (not isinstance(task_id, str) or not ADHOC_JOB_ID_RE.fullmatch(task_id)
             or task_id != job['job_id'] or job['confirmation_request_id'] != f'wechat-auto:{task_id}'
@@ -772,7 +762,21 @@ def resolve_auto_reply_authorization(
             or type(source['observed_at']) is not int
             or not MIN_OBSERVED_MS <= source['observed_at'] <= job['created_at']):
         raise ValueError('invalid_auto_reply_source')
+    return source
 
+
+def resolve_auto_reply_authorization(
+    job,
+    config,
+    now_ms,
+    *,
+    root,
+    config_path=None,
+    contacts_path=None,
+    manual_reply_path=None,
+    trusted_uid=0,
+):
+    source = _validate_auto_reply_origin(job)
     manual_view = _read_trusted_manual_reply_view(
         config,
         root=root,
@@ -829,6 +833,7 @@ def validate_job(
     config_path=None,
     viewport_policy=None,
     manual_reply_path=None,
+    cleanup_only=False,
 ):
     """Accept immutable root-owned jobs only; models cannot write this outbox."""
     path = Path(path)
@@ -901,13 +906,16 @@ def validate_job(
         raise ValueError('missing_send_authorization')
     if type(job['created_at']) is not int or type(job['expires_at']) is not int:
         raise ValueError('invalid_time')
-    if job['created_at'] > now_ms or job['expires_at'] <= now_ms or not 0 < job['expires_at'] - job['created_at'] <= 1800000:
+    if (job['created_at'] > now_ms or not 0 < job['expires_at'] - job['created_at'] <= 1800000
+            or (not cleanup_only and job['expires_at'] <= now_ms)):
         raise ValueError('expired')
+    if cleanup_only and (job['kind'] != 'send' or channel not in {None, 'group'}):
+        raise ValueError('not_chat_draft_job')
 
     resolved_root = _infer_root(path, root)
     if job['account_sha256'] != sha(config.get('account_id', '')):
         raise ValueError('identity_or_policy_changed')
-    if has_notice_origin:
+    if has_notice_origin and not cleanup_only:
         resolve_manual_reply_authorization(
             job,
             config,
@@ -920,10 +928,13 @@ def validate_job(
         )
 
     if has_auto_origin:
-        resolve_auto_reply_authorization(
-            job, config, now_ms, root=resolved_root, config_path=config_path,
-            contacts_path=contacts_path, manual_reply_path=manual_reply_path, trusted_uid=trusted_uid,
-        )
+        if cleanup_only:
+            _validate_auto_reply_origin(job)
+        else:
+            resolve_auto_reply_authorization(
+                job, config, now_ms, root=resolved_root, config_path=config_path,
+                contacts_path=contacts_path, manual_reply_path=manual_reply_path, trusted_uid=trusted_uid,
+            )
 
     if channel == 'adhoc_moments':
         if not isinstance(job['trade_date'], str) or not DATE_RE.fullmatch(job['trade_date']):
@@ -1063,17 +1074,52 @@ def process_job(
     receipts = root / 'adhoc' / 'receipts'
     receipts.mkdir(parents=True, exist_ok=True, mode=0o700)
     receipt = receipts / (Path(path).stem + '.json')
-    previous = document(receipt) if receipt.exists() else None
-    if previous:
+    shared = queue_class(root / 'outbox', root / 'receipts')
+
+    def read_private_receipt():
+        metadata = receipt.lstat()
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.geteuid() or metadata.st_mode & 0o077:
+            raise ValueError('untrusted_chat_draft_receipt')
+        return document(receipt)
+
+    try:
+        previous = read_private_receipt()
+    except FileNotFoundError:
+        previous = None
+    except (OSError, ValueError):
+        return {'state': 'needs_review', 'reason': 'chat_draft_receipt_unverified'}
+
+    recover_draft = bool(
+        previous and previous.get('state') in {'preparing', 'prepared'} and 'draft_provenance' in previous
+    )
+
+    def mark_interrupted(reason):
+        account = config.get('account_id')
+        if not isinstance(account, str) or not account.strip():
+            return {'state': 'needs_review', 'reason': 'chat_draft_recovery_binding_unverified'}
+        try:
+            with shared.lock(sha(account)):
+                fresh = read_private_receipt()
+                if fresh == previous:
+                    if fresh.get('state') == 'publishing':
+                        fresh.pop('submission_attempted', None)
+                    fresh.update(state='needs_review', reason=reason)
+                    save(receipt, fresh)
+                return fresh
+        except BlockingIOError:
+            return {'state': 'busy'}
+        except (OSError, ValueError):
+            return {'state': 'needs_review', 'reason': 'chat_draft_receipt_unverified'}
+
+    if previous and not recover_draft:
         if previous.get('state') in {'preparing', 'prepared', 'publishing'}:
-            previous.update(state='needs_review', reason='worker_stopped_during_ui_transaction')
-            save(receipt, previous)
+            return mark_interrupted('worker_stopped_during_ui_transaction')
         return previous
     try:
         job = validate_job(
             path, config, int(clock() * 1000), trusted_uid,
             root=root, contacts_path=contacts_path, config_path=config_path,
-            viewport_policy=adhoc_viewport_policy, manual_reply_path=manual_reply_path,
+            viewport_policy=adhoc_viewport_policy, manual_reply_path=manual_reply_path, cleanup_only=recover_draft,
         )
         channel = job.get('channel') or 'direct'
         if channel == 'adhoc_moments':
@@ -1089,7 +1135,7 @@ def process_job(
             frozen_meta = None
         auto_verifier = None
         auto_target = None
-        if 'auto_reply_task_id' in job:
+        if not recover_draft and 'auto_reply_task_id' in job:
             scanner_module = importlib.import_module('gamma_cn.moments.inbound_scanner')
             auto_verifier = getattr(scanner_module, 'verify_reply_tail', None)
             if (not callable(auto_verifier)
@@ -1108,15 +1154,17 @@ def process_job(
         selected_desktop = _resolve_desktop_class(
             channel, desktop_class, group_desktop_class, adhoc_desktop_class, friend_label_anchor,
         )
+        if recover_draft and 'cleanup_only' not in inspect.signature(run_one).parameters:
+            raise ValueError('gamma_chat_draft_recovery_unavailable')
     except Exception as error:
+        if recover_draft:
+            return mark_interrupted('chat_draft_recovery_binding_unverified')
         result = {'state': 'refused', 'reason': str(error)[:100]}
         save(receipt, result)
         return result
 
     def current_config():
         return document(config_path) if config_path is not None else config
-
-    shared = queue_class(root / 'outbox', root / 'receipts')
 
     if job['kind'] == 'probe':
         try:
@@ -1167,7 +1215,10 @@ def process_job(
         def load(self, key):
             if key != job['job_id']:
                 raise ValueError('job_identity_mismatch')
-            return document(receipt) if receipt.exists() else {'state': 'queued', 'attempts': 0}
+            try:
+                return read_private_receipt()
+            except FileNotFoundError:
+                return {'state': 'queued', 'attempts': 0}
 
         def save(self, key, record):
             if key != job['job_id']:
@@ -1179,7 +1230,7 @@ def process_job(
             fresh = validate_job(
                 path, fresh_cfg, int(clock() * 1000), trusted_uid,
                 root=root, contacts_path=contacts_path, config_path=config_path,
-                viewport_policy=adhoc_viewport_policy, manual_reply_path=manual_reply_path,
+                viewport_policy=adhoc_viewport_policy, manual_reply_path=manual_reply_path, cleanup_only=recover_draft,
             )
             _assert_frozen_job_invariant(job, fresh)
             trade_date = fresh.get('trade_date') or datetime.fromtimestamp(fresh['created_at'] / 1000, SHANGHAI).date().isoformat()
@@ -1211,6 +1262,17 @@ def process_job(
             return shared.lock(key, producer=producer)
 
     class TimedDesktop(selected_desktop):
+        auto_reply_final_body_supported = True
+
+        def cleanup_chat_draft(self, text, target, account, token):
+            fresh = validate_job(
+                path, current_config(), int(clock() * 1000), trusted_uid,
+                root=root, contacts_path=contacts_path, config_path=config_path,
+                viewport_policy=adhoc_viewport_policy, manual_reply_path=manual_reply_path, cleanup_only=True,
+            )
+            _assert_frozen_job_invariant(job, fresh)
+            return super().cleanup_chat_draft(text, target, account, token)
+
         def _recheck_binding_before_ui(self, expiry_reason):
             now_ms = int(clock() * 1000)
             if now_ms >= job['expires_at']:
@@ -1253,17 +1315,28 @@ def process_job(
                     or self.config.get('recipient_id') != fresh_contact['recipient_id']):
                 raise ValueError('binding_changed_before_submit')
 
-        def preflight(self):
-            self._recheck_binding_before_ui('expired_before_preflight')
-            ok = super().preflight()
-            if ok is True and auto_verifier is not None:
+        def _verify_auto_reply_tail(self):
+            if auto_verifier is not None:
                 if auto_verifier(
                     auto_target, root=root, source=job['auto_reply_source'],
                     desktop=self, deadline_monotonic=time.monotonic() + 10,
                 ) is not True:
                     raise ValueError('auto_reply_tail_not_verified')
+
+        def preflight(self):
+            self._recheck_binding_before_ui('expired_before_preflight')
+            ok = super().preflight()
+            if ok is True and not getattr(self, 'chat_draft_active', False):
+                self._verify_auto_reply_tail()
             self._recheck_binding_before_ui('expired_before_submit')
             return ok
+
+        def finalize_chat_draft(self, text):
+            super().finalize_chat_draft(text)
+            self._recheck_binding_before_ui('expired_before_submit')
+            self._verify_auto_reply_tail()
+            if auto_verifier is not None:
+                self._recheck_binding_before_ui('expired_before_submit')
 
         def submit(self):
             self._recheck_binding_before_ui('expired_before_submit')
@@ -1271,6 +1344,8 @@ def process_job(
 
     queue = AdhocQueue(root / 'adhoc' / 'outbox', receipts)
     run_kwargs = {}
+    if recover_draft:
+        run_kwargs['cleanup_only'] = True
     if clock is not time.time and 'clock' in inspect.signature(run_one).parameters:
         run_kwargs['clock'] = lambda: datetime.fromtimestamp(clock(), SHANGHAI)
     try:

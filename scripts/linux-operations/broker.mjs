@@ -9,7 +9,7 @@ import { pathToFileURL } from 'node:url'
 import { fields, readPolicy, wechatAutoReplyPolicy, wechatNotificationsPolicy } from './policy.mjs'
 import { Operations, QUEUED_WECHAT_KINDS, atomicJson, authority, computeAdhocMomentsBindingSha256, digest, resolveWechatRegistry, shanghaiDate, validateAdhocMomentText } from './operations.mjs'
 import { WechatExchangeProjector, readCapturedWechatInbox, readTrustedManualReplyView, resolveActionableInboundNotice, resolveManualReplyViewPath } from './wechat-inbox.mjs'
-import { canonicalTransportKey, checkOperatorBindingActive, createWechatAutoReplyPump } from './wechat-autoreply.mjs'
+import { canonicalTransportKey, checkOperatorBindingActive, createWechatAutoReplyPump, WechatAutoReplyStore } from './wechat-autoreply.mjs'
 import { createCnPublishedReportProvider } from './wechat-report-facts.mjs'
 
 const exec = promisify(execFile)
@@ -393,8 +393,9 @@ function writeAutoReplyPermit(policy, nowMs, { revoke = false } = {}) {
   return permit
 }
 
-function enqueueAutomaticReply(journal, { decision, source, sourceText, policy, clock }) {
+function enqueueAutomaticReply(journal, { decision, source, sourceText, policy, clock, dispatchBy }) {
   const nowMs = clock()
+  if (nowMs >= dispatchBy) return false
   const live = readPolicy(journal.policyPath)
   if (live.state !== policy.state || live.wechatRoot !== policy.wechatRoot) return false
   const current = wechatAutoReplyPolicy(live)
@@ -421,7 +422,11 @@ function enqueueAutomaticReply(journal, { decision, source, sourceText, policy, 
     const path = join(live.wechatRoot, 'adhoc', 'outbox', `${id}.json`)
     if (!existsSync(path)) return false
     const queued = receiptJson(path)
-    return queued.auto_reply_task_id === id && queued.text_sha256 === digest(decision.draftText)
+    if (queued.auto_reply_task_id !== id || queued.text_sha256 !== digest(decision.draftText)
+      || queued.expires_at !== previous.expiresAt || !Number.isSafeInteger(queued.expires_at)) {
+      throw new Error('Previously queued automatic reply does not match its frozen job')
+    }
+    return { deadlineAt: queued.expires_at }
   }
 
   const registry = resolveWechatRegistry(live)
@@ -462,7 +467,7 @@ function enqueueAutomaticReply(journal, { decision, source, sourceText, policy, 
     journal.save(operation)
     throw error
   }
-  return true
+  return { deadlineAt: expiresAt }
 }
 
 /** Enqueue one immutable message or Moments request for the serialized desktop worker. */
@@ -769,10 +774,16 @@ export function createBrokerProjectionLoop(policy, projectorOptions = {}) {
     autoReplyOptions,
     ...inboxOptions
   } = projectorOptions
-  const projector = new WechatExchangeProjector(policy, inboxOptions)
+  const autoReplyCfg = wechatAutoReplyPolicy(policy)
+  const receiptOnlyStore = !autoReplyCfg.enabled && existsSync(join(policy.state, 'wechat-autoreply.sqlite'))
+    ? new WechatAutoReplyStore(policy, null, { clock: inboxOptions.clock, statUid: inboxOptions.statUid })
+    : null
+  const projector = new WechatExchangeProjector(policy, {
+    ...inboxOptions,
+    onVerifiedAutomaticReceipt: receipt => (autoReplyPump?.store ?? receiptOnlyStore)?.settleAutomaticReceipt(receipt),
+  })
   let stopped = false
   let timer = null
-  const autoReplyCfg = wechatAutoReplyPolicy(policy)
   const reportPublicationProvider = autoReplyCfg.cnPublishedReportDir
     ? createCnPublishedReportProvider(autoReplyCfg.cnPublishedReportDir, { trustedUid: process.getuid?.() ?? 0 })
     : null
@@ -835,6 +846,7 @@ export function createBrokerProjectionLoop(policy, projectorOptions = {}) {
       stopped = true
       if (timer) { clearTimeout(timer); timer = null }
       autoReplyPump?.stop()
+      receiptOnlyStore?.close()
       projector.close()
     },
     projector,

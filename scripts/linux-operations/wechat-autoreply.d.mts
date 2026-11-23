@@ -1,5 +1,6 @@
 /** Type declarations exposing narrow minimal contracts for `wechat-autoreply.mjs`. */
 import type { IsolatedDshAdapterLifecycleState } from './wechat-autoreply-dsh.mjs'
+import type { VerifiedAutomaticWechatReceipt } from './wechat-inbox.mjs'
 
 export type WechatAutoReplyMode = 'disabled' | 'draft_only' | 'unattended'
 export type WechatAutoReplyChannel = 'friend' | 'group'
@@ -11,6 +12,9 @@ export type WechatAutoReplyState =
   | 'notice_only'
   | 'unsupported'
   | 'expired'
+  | 'sent_verified'
+  | 'not_sent'
+export type WechatAutoReplySendAction = 'none' | 'reserved' | 'queued' | 'needs_review' | 'sent_verified' | 'not_sent'
 export type WechatAutoReplyEligibilityDecision =
   | 'claimed'
   | 'draft_only'
@@ -256,7 +260,7 @@ export interface WechatAutoReplyTaskRecord {
   readonly requestedMode: WechatAutoReplyMode
   readonly state: WechatAutoReplyState
   readonly eligibilityDecision: WechatAutoReplyEligibilityDecision
-  readonly sendAction: 'none' | 'queued' | 'needs_review'
+  readonly sendAction: WechatAutoReplySendAction
   readonly policyVersion: number
   readonly attempts: number
   readonly maxAttempts: number
@@ -385,7 +389,7 @@ export interface WechatAutoReplyPumpEvaluatedItem {
   readonly noticeId: string
   readonly state: WechatAutoReplyState
   readonly eligibilityDecision: WechatAutoReplyEligibilityDecision
-  readonly sendAction: 'none' | 'queued' | 'needs_review'
+  readonly sendAction: WechatAutoReplySendAction
   readonly duplicate: boolean
   readonly ownerNoticeProjected: boolean
 }
@@ -419,6 +423,7 @@ export class WechatAutoReplyStore {
       readonly statUid?: ((stat: { readonly uid: number }, path: string) => number) | undefined
       readonly verifyOperatorBinding?: boolean | undefined
       readonly verifyEvidenceFiles?: boolean | undefined
+      readonly dispatchEnabled?: boolean | undefined
       readonly cooperativeShutdownMs?: number | undefined
       readonly maxOrphanedAdapterTasks?: number | undefined
       readonly maxOrphanedBackgroundTasks?: number | undefined
@@ -442,6 +447,7 @@ export class WechatAutoReplyStore {
   replaceAdapterState(): WechatAutoReplyBackgroundWorkState
   whenBackgroundIdle(): Promise<WechatAutoReplyBackgroundWorkState>
   getTaskByBatchId(batchId: string): WechatAutoReplyTaskRecord | null
+  settleAutomaticReceipt(receipt: VerifiedAutomaticWechatReceipt): WechatAutoReplyTaskRecord | null
   evaluateSealedBatch(
     batchId: string,
     options?: WechatAutoReplyEvaluateOptions,
@@ -504,7 +510,8 @@ export function createWechatAutoReplyPump(options: {
     readonly sourceText: string
     readonly policy: Readonly<Record<string, unknown>>
     readonly clock: () => number
-  }) => boolean | Promise<boolean>) | null | undefined
+    readonly dispatchBy: number
+  }) => boolean | { readonly deadlineAt: number } | Promise<boolean | { readonly deadlineAt: number }>) | null | undefined
   readonly clock?: (() => number) | undefined
   readonly statUid?: ((stat: { readonly uid: number }, path: string) => number) | undefined
   readonly verifyOperatorBinding?: boolean | undefined

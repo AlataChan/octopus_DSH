@@ -51,6 +51,12 @@ export const TERMINAL_RECEIPT_STATES = new Set([
   'expired',
   'auth_required',
 ])
+const PRE_SUBMIT_DRAFT_REVIEW_REASONS = new Set([
+  'chat_draft_cleanup_unverified',
+  'chat_draft_recovery_unverified',
+  'chat_draft_provenance_mismatch',
+  'chat_draft_recovery_binding_unverified',
+])
 
 const CONTAINER_MOMENTS_PREFIX = '/home/wechat/.gamma-moments/'
 const EVENT_ID_RE = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{7,127}$/
@@ -723,7 +729,7 @@ function verifyFrozenOperationForOutbox(opsDb, jobId, outbox) {
       !autoReply || !source || outbox.auto_reply_task_id !== jobId
       || outbox.confirmation_request_id !== `wechat-auto:${jobId}`
       || outbox.auto_reply_policy_version !== autoReply.policyVersion
-      || outbox.expires_at !== operation.expiresAt
+      || outbox.created_at !== operation.createdAt || outbox.expires_at !== operation.expiresAt
       || source.source_ref !== autoReply.source.source_ref
       || source.text_sha256 !== autoReply.source.text_sha256
       || source.evidence_sha256 !== autoReply.source.evidence_sha256
@@ -853,11 +859,10 @@ function renderInboundBatchBody(batch, events, maxBytes) {
     }
     if (event.evidenceSha256) {
       entry += ` | ref:${event.sourceRef} | 截图:${event.evidenceSha256.slice(0, 12)}`
-      if (event.conversationKind === 'group' && event.needsReview && Object.hasOwn(groupReviewReasons, event.reason)) {
-        entry += ` | ${groupReviewReasons[event.reason]}`
-      }
-    } else if (event.reason) {
-      entry += ` | 原因:${event.reason}`
+    }
+    if (event.reason && (event.needsReview || !event.evidenceSha256)) {
+      entry += Object.hasOwn(groupReviewReasons, event.reason)
+        ? ` | ${groupReviewReasons[event.reason]}` : ` | 原因:${event.reason}`
     }
     lines.push(entry)
   }
@@ -888,9 +893,11 @@ function targetSummaryFromOutbox(outbox, receipt) {
   return `好友 ${recipient}`
 }
 
-function renderTerminalReceiptBody(noticeId, jobId, outbox, receipt, maxBytes, automatic = null) {
+function renderTerminalReceiptBody(noticeId, jobId, outbox, receipt, maxBytes, automatic = null, submissionProvenAbsent = false) {
   const target = targetSummaryFromOutbox(outbox, receipt)
-  const stateLabel = RECEIPT_STATE_LABELS[receipt.state] ?? receipt.state
+  const stateLabel = submissionProvenAbsent
+    ? '未提交发送，草稿需要人工核查'
+    : (RECEIPT_STATE_LABELS[receipt.state] ?? receipt.state)
   const snippet = outbox.text
     ? sanitizeUntrustedNoticeText(outbox.text, { singleLine: true, maxBytes: 180 })
     : ''
@@ -927,6 +934,7 @@ export class WechatExchangeProjector {
     this.policy = policy
     this.clock = options.clock ?? (() => Date.now())
     this.statUid = options.statUid ?? defaultStatUid
+    this.onVerifiedAutomaticReceipt = options.onVerifiedAutomaticReceipt ?? null
     this.db = openPrivateProjectionDatabase(policy.state, this.statUid)
   }
 
@@ -1436,6 +1444,35 @@ export class WechatExchangeProjector {
             throw new Error('Receipt account_sha256 mismatch')
           }
           const operation = verifyFrozenOperationForOutbox(opsDb, jobId, outbox)
+          let submissionProvenAbsent = false
+          if (operation.autoReply) {
+            // The worker may refuse an invalid/expired job before it has loaded
+            // enough of the job to add identity fields to its receipt.
+            if (!['sent_verified', 'failed_before_submit', 'refused', 'expired', 'auth_required', 'needs_review'].includes(receipt.state)
+              || (receipt.state !== 'refused' && (receipt.job_id !== jobId || receipt.text_sha256 !== outbox.text_sha256))
+              || (Object.hasOwn(receipt, 'job_id') && receipt.job_id !== jobId)
+              || (Object.hasOwn(receipt, 'text_sha256') && receipt.text_sha256 !== outbox.text_sha256)) {
+              throw new Error('Automatic reply worker receipt does not match frozen job')
+            }
+            const verifiedAt = typeof receipt.verified_at === 'string' ? Date.parse(receipt.verified_at) : NaN
+            submissionProvenAbsent = receipt.state === 'needs_review' && receipt.submission_attempted === false
+              && ['prepare', 'preflight'].includes(receipt.phase) && PRE_SUBMIT_DRAFT_REVIEW_REASONS.has(receipt.reason)
+            this.onVerifiedAutomaticReceipt?.({
+              taskId: jobId,
+              batchId: operation.autoReply.batchId,
+              policyVersion: operation.autoReply.policyVersion,
+              conversationKey: `${operation.contactType}:${operation.contactId}`,
+              targetProof: operation.targetProof,
+              accountSha256: outbox.account_sha256,
+              textSha256: outbox.text_sha256,
+              observedAt: nowMs,
+              verifiedAt: verifiedAt >= outbox.created_at && verifiedAt <= nowMs ? verifiedAt : null,
+              deadlineAt: outbox.expires_at,
+              state: receipt.state,
+              reason: /^[a-zA-Z][a-zA-Z0-9_]{0,79}$/.test(receipt.reason ?? '') ? receipt.reason : null,
+              submissionProvenAbsent,
+            })
+          }
 
           const eventTimeMs = Number.isFinite(receipt.checked_at)
             ? Math.trunc(Number(receipt.checked_at) * 1000)
@@ -1451,7 +1488,7 @@ export class WechatExchangeProjector {
             continue
           }
           const noticeId = formatNoticeId(noticeKey)
-          const body = renderTerminalReceiptBody(noticeId, jobId, outbox, receipt, cfg.maxNoticeBytes, operation.autoReply)
+          const body = renderTerminalReceiptBody(noticeId, jobId, outbox, receipt, cfg.maxNoticeBytes, operation.autoReply, submissionProvenAbsent)
           const handoffFileName = `${digest(noticeKey).slice(0, 32)}.json`
           const changed = insertProjected.run(
             noticeKey,
