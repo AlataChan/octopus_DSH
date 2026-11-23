@@ -1,0 +1,25 @@
+# Bilingual-pair consistency record for 2026-11-22-octopus-video-workbench.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/plans/2026-11-22-octopus-video-workbench.md
+/octopus-dsh-video-workbench-integration-plan:
+  en: db844a80af2b078a
+  zh: e4628c93246dbb20
+/octopus-dsh-video-workbench-integration-plan/user-flow:
+  en: e4289cf742535b69
+  zh: 077ce7679832ad51
+/octopus-dsh-video-workbench-integration-plan/release-decisions-and-delivery-phases:
+  en: 76be80f60bba81d4
+  zh: c4ef291cd2622341
+/octopus-dsh-video-workbench-integration-plan/project-storage-revisions-and-preview:
+  en: f4da169460baa8cd
+  zh: a012808c7d5f5947
+/octopus-dsh-video-workbench-integration-plan/shotcraft-and-paid-generation:
+  en: 5e7cd5d4c62484ba
+  zh: 501141ad1b4b8ebe
+/octopus-dsh-video-workbench-integration-plan/phase-0-qualification-matrix:
+  en: f4f6b46ce8ca8313
+  zh: 1f491ab048144752
+/octopus-dsh-video-workbench-integration-plan/desktop-and-wechat-entry-points:
+  en: fafa5eedc0ecb7f9
+  zh: 4978f559181e10f9
