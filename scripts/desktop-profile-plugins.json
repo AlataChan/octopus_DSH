@@ -105,6 +105,10 @@
       "version": "0.2.1-alpha.1",
       "source": "workspace",
       "path": "packages/experimental/agent-reach"
+    },
+    {
+      "name": "dsh-open-artifact",
+      "version": "0.17.0"
     }
   ]
 }

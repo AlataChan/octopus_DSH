@@ -75,7 +75,7 @@ export function productionInstallDependencies(
 
 export function isSeedPayloadPath(
   relativePath: string,
-  options?: { includeModules?: boolean },
+  options?: { includeModules?: boolean, preserveNestedRuntime?: boolean },
 ): boolean
 
 export function pruneSeedModuleBins(dir: string): void

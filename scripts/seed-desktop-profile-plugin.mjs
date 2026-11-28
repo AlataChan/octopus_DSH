@@ -312,7 +312,7 @@ export function fetchPlugin(plugin, outDir, options = {}) {
   const tarballName = `${plugin.name.replace(/^@/, '').replace('/', '-')}-${plugin.version}.tgz`
   const tarball = join(cacheDir, tarballName)
   if (!existsSync(tarball)) {
-    execFileSync(npmExecutable(), ['pack', spec, '--pack-destination', cacheDir], {
+    execFileSync(npmExecutable(), ['pack', spec, '--ignore-scripts', '--pack-destination', cacheDir], {
       stdio: 'inherit',
       shell: process.platform === 'win32',
     })
@@ -329,7 +329,7 @@ export function fetchPlugin(plugin, outDir, options = {}) {
       throw new Error(`seed: dest ${dest} is a symlink`)
     }
     rmSync(dest, { recursive: true, force: true })
-    copyPackageTree(unpacked, dest)
+    copyPackageTree(unpacked, dest, { preserveNestedRuntime: true })
     installProductionDependencies(dest)
     pruneSeedModuleBins(dest)
     validatePluginDir(dest, plugin)
@@ -449,14 +449,16 @@ const SEED_SKIP_FILES = new Set(['tsdown.config.ts', '.gitignore', '.DS_Store'])
  * afterwards). Compile intermediates such as `motion/` and Host/Client
  * sources stay in the checkout; the seeded tree loads `lib/` and `media/`.
  * @param {string} relativePath
- * @param {{ includeModules?: boolean }} [options]
+ * @param {{ includeModules?: boolean, preserveNestedRuntime?: boolean }} [options]
  * @returns {boolean}
  */
 export function isSeedPayloadPath(relativePath, options = {}) {
   const parts = relativePath.split(sep).filter(Boolean)
   if (parts.length === 0) return true
   if (parts.includes('node_modules')) return options.includeModules === true
-  if (parts.some(part => SEED_SKIP_DIRS.has(part))) return false
+  // Published packages can embed runtime directories such as vendor/artifact-types/motion.
+  const excluded = options.preserveNestedRuntime === true ? parts.slice(0, 1) : parts
+  if (excluded.some(part => SEED_SKIP_DIRS.has(part))) return false
   const base = parts[parts.length - 1] ?? ''
   if (SEED_SKIP_FILES.has(base)) return false
   if (base.startsWith('tsconfig') && base.endsWith('.json')) return false
@@ -500,7 +502,7 @@ export function pruneSeedModuleBins(dir) {
  * install; workspace copies still skip `node_modules`.
  * @param {string} src
  * @param {string} dest
- * @param {{ includeModules?: boolean }} [options]
+ * @param {{ includeModules?: boolean, preserveNestedRuntime?: boolean }} [options]
  */
 function copyPackageTree(src, dest, options = {}) {
   mkdirSync(dirname(dest), { recursive: true })

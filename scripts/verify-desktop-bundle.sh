@@ -366,6 +366,14 @@ while IFS= read -r dest; do
     else
       bad "$dest failed seed validation"
     fi
+    if [[ "$dest" == "dsh-open-artifact" ]]; then
+      if [[ -s "$plugin_dir/vendor/artifact-types/motion/artifact-type.json" \
+        && -s "$plugin_dir/vendor/type-server/editors/motion/index.html" ]]; then
+        ok "$dest includes the Motion type and editor"
+      else
+        bad "$dest is missing its packaged Motion runtime"
+      fi
+    fi
     if [[ "$dest" == "@deepseek-ai/dsh-experimental-desktop-ask-data" ]]; then
       if [[ -f "$plugin_dir/samples/sample-sales.xlsx" && -f "$plugin_dir/samples/sample-sales.sqlite" ]]; then
         ok "$dest includes sample-sales.xlsx and sample-sales.sqlite"
